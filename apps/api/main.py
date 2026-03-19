@@ -109,8 +109,15 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root() -> dict[str, str]:
+    """Base URL liveness (some checks hit `/` instead of `/health`)."""
+    return {"status": "ok", "service": "frame-api", "health": "/health"}
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
+@app.get("/health/")
+async def health() -> dict[str, str]:
     return {"status": "ok", "service": "frame-api"}
 
 
