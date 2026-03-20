@@ -37,6 +37,10 @@ if (!candidateId) {
 const fecApiKey = process.env.FEC_API_KEY ?? "DEMO_KEY";
 const privatePem = getPrivateKeyPem();
 const publicPem = getPublicKeyPem();
+process.stderr.write(`DEBUG key format: ${process.env.FRAME_KEY_FORMAT}\n`);
+process.stderr.write(`DEBUG raw length: ${process.env.FRAME_PRIVATE_KEY?.length}\n`);
+process.stderr.write(`DEBUG pem starts: ${privatePem.slice(0, 40)}\n`);
+process.stderr.write(`DEBUG pem ends: ${privatePem.slice(-40)}\n`);
 const privateKey = createPrivateKey(privatePem);
 
 const envDer = createPublicKey(publicPem).export({ type: "spki", format: "der" }) as Buffer;
