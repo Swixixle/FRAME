@@ -1,44 +1,20 @@
 /**
- * Build a live FEC receipt for a candidate and sign it with FRAME_PRIVATE_KEY from apps/api/.env.
+ * Build a live FEC receipt for a candidate and sign it with FRAME_PRIVATE_KEY.
  * Used by the Frame API (Python subprocess). Prints one JSON object to stdout.
+ *
+ * Set FEC_API_KEY, FRAME_PRIVATE_KEY, and FRAME_PUBLIC_KEY in the environment
+ * (e.g. Render dashboard). `apps/api/.env` is not read by this script.
  *
  * Usage: npx tsx scripts/generate-receipt.ts <candidateId>
  */
 import { createPrivateKey, createPublicKey } from "node:crypto";
-import { readFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { buildLiveFecReceipt } from "../packages/sources/index.js";
 import { signReceipt, verifyReceipt } from "../packages/signing/index.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(__dirname, "..");
-const ENV_PATH = path.join(REPO_ROOT, "apps", "api", ".env");
-
-/** Minimal .env parser: KEY=value or KEY="JSON-encoded string" (PEMs use JSON.stringify newlines). */
-function loadEnvFile(filePath: string): void {
-  const raw = readFileSync(filePath, "utf8");
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let val = trimmed.slice(eq + 1).trim();
-    if (
-      (val.startsWith('"') && val.endsWith('"')) ||
-      (val.startsWith("'") && val.endsWith("'"))
-    ) {
-      val = JSON.parse(val) as string;
-    }
-    process.env[key] = val;
-  }
-}
 
 function pemFromEnv(name: string): string {
   const v = process.env[name];
   if (!v || v.trim() === "") {
-    throw new Error(`Missing ${name} in ${ENV_PATH}`);
+    throw new Error(`Missing ${name} in environment`);
   }
   return v.replace(/\\n/g, "\n").trim();
 }
@@ -49,9 +25,8 @@ if (!candidateId) {
   process.exit(1);
 }
 
-loadEnvFile(ENV_PATH);
+const fecApiKey = process.env.FEC_API_KEY ?? "DEMO_KEY";
 
-const fecKey = process.env.FEC_API_KEY?.trim() ?? "DEMO_KEY";
 const privatePem = pemFromEnv("FRAME_PRIVATE_KEY");
 const publicPem = pemFromEnv("FRAME_PUBLIC_KEY");
 
@@ -70,7 +45,7 @@ if (!envDer.equals(derivedDer)) {
   );
 }
 
-const payload = await buildLiveFecReceipt(candidateId, fecKey);
+const payload = await buildLiveFecReceipt(candidateId, fecApiKey);
 const signed = signReceipt(payload, { privateKey });
 
 const v = verifyReceipt(signed);
