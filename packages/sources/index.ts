@@ -10,6 +10,16 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function sanitizeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("api_key");
+    return u.toString();
+  } catch {
+    return url.replace(/[?&]api_key=[^&]*/g, "");
+  }
+}
+
 export async function fetchFecContext(
   query: SourceQuery,
 ): Promise<SourceAdapterResult> {
@@ -49,7 +59,7 @@ export async function fetchFecContext(
       sources.push({
         id: `fec-candidate-${candidateId}`,
         adapter: "fec",
-        url: searchUrl,
+        url: sanitizeUrl(searchUrl),
         title: `FEC candidate profile: ${candidateName}`,
         retrievedAt: nowIso(),
         externalRef: candidateId,
@@ -93,7 +103,7 @@ export async function fetchFecContext(
     sources.push({
       id: `fec-totals-${candidateId}`,
       adapter: "fec",
-      url: totalsUrl,
+      url: sanitizeUrl(totalsUrl),
       title: `FEC fundraising totals by cycle: ${candidateName}`,
       retrievedAt: nowIso(),
       externalRef: candidateId,
@@ -141,7 +151,9 @@ export async function buildLiveFecReceipt(
     sources.push({
       id: totalsSourceId,
       adapter: "fec",
-      url: `https://api.open.fec.gov/v1/candidates/totals/?candidate_id=${candidateId}`,
+      url: sanitizeUrl(
+        `https://api.open.fec.gov/v1/candidates/totals/?candidate_id=${candidateId}`,
+      ),
       title: `FEC fundraising totals: ${candidateName}`,
       retrievedAt: nowIso(),
       externalRef: candidateId,
@@ -258,7 +270,7 @@ export async function buildLiveLobbyingReceipt(
     {
       id: "lda-filings-rr-2024",
       adapter: "lobbying",
-      url: filingsUrl,
+      url: sanitizeUrl(filingsUrl),
       title: `Senate LDA: registrations (RR, 2024) — registrant name search: ${name}`,
       retrievedAt: nowIso(),
       externalRef: fecCandidateId ?? name,
@@ -271,7 +283,7 @@ export async function buildLiveLobbyingReceipt(
     {
       id: "lda-lobbyists-name",
       adapter: "lobbying",
-      url: lobbyistsUrl,
+      url: sanitizeUrl(lobbyistsUrl),
       title: `Senate LDA: lobbyist directory — name search: ${name}`,
       retrievedAt: nowIso(),
       externalRef: fecCandidateId ?? name,
@@ -415,7 +427,7 @@ export async function buildLobbyingCrossReference(
         sources.push({
           id: sourceId,
           adapter: "lobbying",
-          url,
+          url: sanitizeUrl(url),
           title: `Senate LDA: ${client} lobbying filings — ${year}`,
           retrievedAt: nowIso(),
           externalRef: `${client}-${year}`,
@@ -516,7 +528,10 @@ export async function buildCombinedPoliticianReceipt(
     buildLobbyingCrossReference(candidateId, lobbyingClients, years, apiKey),
   ]);
 
-  const allSources = [...fecResult.sources, ...ldaResult.sources];
+  const allSources = [...fecResult.sources, ...ldaResult.sources].map((s) => ({
+    ...s,
+    url: sanitizeUrl(s.url),
+  }));
 
   const fecTotalsSource = fecResult.sources.find((s) => s.id.includes("totals"));
   const fecMeta = fecTotalsSource?.metadata as
