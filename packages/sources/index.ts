@@ -1,4 +1,5 @@
 import type {
+  FrameReceiptPayload,
   SourceAdapter,
   SourceAdapterResult,
   SourceQuery,
@@ -9,26 +10,185 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** FEC Open Data API — committee & candidate context (illustrative stub). */
 export async function fetchFecContext(
   query: SourceQuery,
 ): Promise<SourceAdapterResult> {
-  const committeeId = String(query.params.committeeId ?? "");
-  if (!committeeId) {
-    return { sources: [], errors: ["fec: committeeId is required"] };
+  const candidateId = String(query.params.candidateId ?? "");
+  if (!candidateId) {
+    return { sources: [], errors: ["fec: candidateId is required"] };
   }
-  const sources: SourceRecord[] = [
-    {
-      id: `fec-committee-${committeeId}`,
+
+  const apiKey = (query.params.apiKey as string | undefined) ?? "DEMO_KEY";
+  const baseUrl = "https://api.open.fec.gov/v1";
+  const sources: SourceRecord[] = [];
+  const errors: string[] = [];
+  let candidateName = candidateId;
+  let allCycleTotals: Array<{
+    cycle: number;
+    receipts: number;
+    pacContributions: number;
+    individualContributions: number;
+    electionYear: number;
+  }> = [];
+
+  try {
+    const searchUrl = `${baseUrl}/candidates/?candidate_id=${candidateId}&api_key=${apiKey}`;
+    const searchRes = await fetch(searchUrl);
+    const searchData = await searchRes.json() as {
+      results?: Array<{
+        name?: string;
+        office_full?: string;
+        state?: string;
+        party_full?: string;
+        election_years?: number[];
+      }>;
+    };
+    if (searchData.results?.[0]) {
+      const c = searchData.results[0];
+      candidateName = c.name ?? candidateId;
+      sources.push({
+        id: `fec-candidate-${candidateId}`,
+        adapter: "fec",
+        url: searchUrl,
+        title: `FEC candidate profile: ${candidateName}`,
+        retrievedAt: nowIso(),
+        externalRef: candidateId,
+        metadata: {
+          candidateId,
+          candidateName,
+          office: c.office_full,
+          state: c.state,
+          party: c.party_full,
+          electionYears: c.election_years,
+        },
+      });
+    }
+  } catch (e) {
+    errors.push(`fec candidate search failed: ${String(e)}`);
+  }
+
+  try {
+    const totalsUrl = `${baseUrl}/candidates/totals/?candidate_id=${candidateId}&api_key=${apiKey}&per_page=20&sort=-election_year`;
+    const totalsRes = await fetch(totalsUrl);
+    const totalsData = await totalsRes.json() as {
+      results?: Array<{
+        cycle?: number;
+        receipts?: number;
+        other_political_committee_contributions?: number;
+        individual_itemized_contributions?: number;
+        election_year?: number;
+      }>;
+    };
+    allCycleTotals = (totalsData.results ?? [])
+      .map((r) => ({
+        cycle: r.cycle ?? 0,
+        receipts: r.receipts ?? 0,
+        pacContributions: r.other_political_committee_contributions ?? 0,
+        individualContributions: r.individual_itemized_contributions ?? 0,
+        electionYear: r.election_year ?? r.cycle ?? 0,
+      }))
+      .filter((r) => r.receipts > 0);
+
+    sources.push({
+      id: `fec-totals-${candidateId}`,
       adapter: "fec",
-      url: `https://www.fec.gov/data/committee/${committeeId}/`,
-      title: `FEC committee profile ${committeeId}`,
+      url: totalsUrl,
+      title: `FEC fundraising totals by cycle: ${candidateName}`,
       retrievedAt: nowIso(),
-      externalRef: committeeId,
-      metadata: { committeeId },
-    },
-  ];
-  return { sources };
+      externalRef: candidateId,
+      metadata: { candidateId, allCycleTotals },
+    });
+  } catch (e) {
+    errors.push(`fec totals lookup failed: ${String(e)}`);
+  }
+
+  return {
+    sources,
+    errors: errors.length ? errors : undefined,
+    metadata: { candidateName, allCycleTotals },
+  };
+}
+
+export async function buildLiveFecReceipt(
+  candidateId: string,
+  apiKey: string = "DEMO_KEY",
+): Promise<FrameReceiptPayload> {
+  const result = await fetchFecContext({
+    kind: "fec",
+    params: { candidateId, apiKey },
+  });
+
+  const { candidateName = candidateId, allCycleTotals = [] } = (result.metadata ?? {}) as {
+    candidateName?: string;
+    allCycleTotals?: Array<{
+      cycle: number;
+      receipts: number;
+      pacContributions: number;
+      individualContributions: number;
+      electionYear: number;
+    }>;
+  };
+
+  const sources = result.sources;
+  const narrative: Array<{ text: string; sourceId: string }> = [];
+  const totalsSourceId = `fec-totals-${candidateId}`;
+
+  if (!sources.find((s) => s.id === totalsSourceId)) {
+    sources.push({
+      id: totalsSourceId,
+      adapter: "fec",
+      url: `https://api.open.fec.gov/v1/candidates/totals/?candidate_id=${candidateId}`,
+      title: `FEC fundraising totals: ${candidateName}`,
+      retrievedAt: nowIso(),
+      externalRef: candidateId,
+      metadata: { note: "API unavailable at signing time" },
+    });
+  }
+
+  if (allCycleTotals.length === 0) {
+    narrative.push({
+      text: `FEC records were queried for candidate ${candidateName} (ID: ${candidateId}) at signing time. No fundraising totals were returned.`,
+      sourceId: totalsSourceId,
+    });
+  } else {
+    const careerTotal = allCycleTotals.reduce((sum, c) => sum + c.receipts, 0);
+    const careerPac = allCycleTotals.reduce((sum, c) => sum + c.pacContributions, 0);
+    const pacPct = careerTotal > 0 ? ((careerPac / careerTotal) * 100).toFixed(1) : "0";
+
+    narrative.push({
+      text: `According to FEC records, ${candidateName} (ID: ${candidateId}) raised a total of $${careerTotal.toLocaleString()} across ${allCycleTotals.length} election cycle(s) on record.`,
+      sourceId: totalsSourceId,
+    });
+
+    narrative.push({
+      text: `Of that total, $${careerPac.toLocaleString()} (${pacPct}%) came from PACs and other political committees, with $${(careerTotal - careerPac).toLocaleString()} from individual contributors.`,
+      sourceId: totalsSourceId,
+    });
+
+    const electionCycles = allCycleTotals.filter((c) => c.electionYear === c.cycle);
+    for (const c of electionCycles.slice(0, 3)) {
+      narrative.push({
+        text: `In the ${c.cycle} election cycle, ${candidateName} raised $${c.receipts.toLocaleString()} total, including $${c.pacContributions.toLocaleString()} from PACs.`,
+        sourceId: totalsSourceId,
+      });
+    }
+  }
+
+  return {
+    schemaVersion: "1.0.0",
+    receiptId: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    claims: [
+      {
+        id: "claim-1",
+        statement: `Live FEC fundraising record for ${candidateName} (${candidateId})`,
+        assertedAt: new Date().toISOString(),
+      },
+    ],
+    sources,
+    narrative,
+    contentHash: "",
+  };
 }
 
 /** OpenSecrets — money-in-politics summaries (illustrative stub). */

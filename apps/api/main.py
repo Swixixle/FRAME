@@ -100,6 +100,10 @@ class SignedReceipt(BaseModel):
     publicKey: str
 
 
+class GenerateReceiptRequest(BaseModel):
+    candidateId: str = Field(..., min_length=1, max_length=64)
+
+
 app = FastAPI(title="Frame API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +131,41 @@ def adapters() -> dict[str, list[str]]:
         "kinds": ["fec", "opensecrets", "propublica", "lobbying", "edgar", "manual"],
         "note": "Adapters normalize third-party data into Frame SourceRecord rows.",
     }
+
+
+@app.post("/v1/generate-receipt")
+def generate_receipt(body: GenerateReceiptRequest) -> dict[str, Any]:
+    """
+    Build a live FEC receipt for `candidateId` via Node (`buildLiveFecReceipt` + `signReceipt`),
+    same pipeline as `scripts/generate-receipt.ts`.
+    """
+    root = _repo_root()
+    script = root / "scripts" / "generate-receipt.ts"
+    if not script.is_file():
+        raise HTTPException(status_code=500, detail="generate-receipt script missing")
+
+    proc = subprocess.run(
+        ["npx", "tsx", str(script), body.candidateId],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "subprocess failed").strip()
+        raise HTTPException(
+            status_code=502,
+            detail={"message": "generate-receipt failed", "stderr": err[:4000]},
+        )
+    try:
+        out = json.loads(proc.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"invalid JSON from generate-receipt: {exc}",
+        ) from exc
+    return out
 
 
 @app.post("/v1/jcs-sha256")

@@ -99,6 +99,8 @@ export interface SourceAdapterResult {
   sources: SourceRecord[];
   /** Adapter-reported errors (network, rate limit). */
   errors?: string[];
+  /** Optional structured adapter output (e.g. for live receipt builders). */
+  metadata?: Record<string, unknown>;
 }
 
 export type SourceAdapter = (query: SourceQuery) => Promise<SourceAdapterResult>;
