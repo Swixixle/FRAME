@@ -2,6 +2,8 @@
 
 **Last updated:** March 2026 (Session 2)
 
+**Full handoff (architecture, Render, E2E, troubleshooting):** [`HANDOFF.md`](./HANDOFF.md)
+
 ## What Frame is (one paragraph)
 
 Frame is a transparency tool that turns political claims into **cryptographically signed receipts**: each receipt ties neutral narrative sentences to concrete sources (money, votes, lobbying, filings) so readers can see **what the record shows** without editorial judgment baked into the cryptography. Hashing uses **JCS (RFC 8785)** via the `canonicalize` npm package (never `JSON.stringify` for signatures); signing is **Ed25519**.
