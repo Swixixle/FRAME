@@ -1,60 +1,108 @@
-# Frame — project context
+# Frame — Project Context
 
-**Last updated:** March 2026 (Session 2)
+## The Mission
+Cryptographic fact-checking with citations and no judgment. Works for lies and truths equally. 
+Public figures are fair game — politicians, journalists, executives, ministers, celebrities. 
+Every claim gets the same treatment: sourced, signed, tamper-evident, verifiable by anyone.
 
-**Full handoff (architecture, Render, E2E, troubleshooting):** [`HANDOFF.md`](./HANDOFF.md)
+Not an attack tool. An epistemic infrastructure tool.
 
-## What Frame is (one paragraph)
+The goal is to work on any platform — TikTok, Instagram Reels, Facebook, X, news apps. 
+Someone sees a claim in a video. They want to know if it's true. Frame gives them a 
+cryptographic receipt with citations — no editorial, no spin, just the gap or alignment 
+between the claim and the public record.
 
-Frame is a transparency tool that turns political claims into **cryptographically signed receipts**: each receipt ties neutral narrative sentences to concrete sources (money, votes, lobbying, filings) so readers can see **what the record shows** without editorial judgment baked into the cryptography. Hashing uses **JCS (RFC 8785)** via the `canonicalize` npm package (never `JSON.stringify` for signatures); signing is **Ed25519**.
+This works for good people too. If someone has a genuine record of charity, honesty, 
+or public service — Frame proves that just as rigorously as it proves the opposite.
 
-## The three governance rules
+## What Frame Is
+Frame turns claims by public figures into cryptographically signed receipts.
+Each receipt contains:
+- The claim (verbatim)
+- Sourced neutral narrative sentences
+- Primary source URLs (FEC, lobbying disclosures, IRS 990s, court records, scripture, etc.)
+- An Ed25519 signature proving the content hasn't been tampered with since signing
 
-1. **Every narrative sentence must have a `sourceId`** that exists in the `sources` array.
-2. **No judgment adjectives** in narrative (e.g. corrupt, suspicious, troubling, criminal, fraudulent, unethical, scandal, etc.) — describe filings and data neutrally.
-3. **JCS canonicalization** for all cryptographic hashing — use the **`canonicalize`** npm package; **never** `JSON.stringify` for hash/signature payloads.
+The verification is live. Anyone can check it. Anyone can re-verify independently.
 
-## Current build status
+## Architecture — Current
+packages/types — shared interfaces (FrameReceiptPayload, SourceRecord, NarrativeSentence)
+packages/signing — Ed25519 + JCS canonicalization (RFC 8785)
+packages/narrative — governance rules, banned words, domain whitelist
+packages/sources — data adapters (FEC live, others stubbed)
+packages/entity — disambiguation
+apps/api — FastAPI: /v1/verify-receipt, /v1/generate-receipt
+apps/web — static demo UI
+scripts/generate-keys.ts — key generation (--write-env flag)
+scripts/seed-demo.ts — signs Manchin fixture for demo
+scripts/generate-receipt.ts — called by API to sign live FEC receipts
+scripts/test-fec.ts — local FEC API testing
 
-- **Tests:** `npm test` — **5/5 passing** (Vitest; Manchin signing + governance checks).
-- **TypeScript:** `npm run build` — project references build clean.
-- **Repo:** Pushed to **GitHub** (`Swixixle/FRAME` / `main`).
-- **Session 2 delivered:** `scripts/seed-demo.ts` signs the Manchin fixture with keys from `apps/api/.env` (not committed), writes `apps/web/demo-payload.json`, and the web demo loads that file over HTTP. FastAPI verify uses Node `scripts/jcs-stringify.mjs` for matching JCS.
+## Architecture — Planned Extensions
+The schema is already general. Sources accept any URL. Claims accept any statement.
+FEC is just one adapter. Everything below plugs into the same signing pipeline.
 
-## Next immediate tasks
+Claim intake layer (next major build):
+- POST /v1/intake — accepts a text claim or video URL
+- Claim classifier — routes to correct adapter(s) based on claim type
+- Video transcription via Whisper — extract claims from video automatically
+- Claim extraction — identify specific falsifiable claims from transcript
 
-1. **Demo / grant artifact:** One **working signed Frame** on the Manchin claim, **hosted publicly** (URL you can paste into the application).
-2. **Deploy:** e.g. **Render** (or similar) for API + static `apps/web` (or combined approach) so the Brown submission has a live **demo URL**.
-3. **Brown application package:** Submit alongside the written sections already drafted — the **running demo is part of the submission**.
+Adapter roadmap (in priority order):
+1. FEC — DONE (live, any senator by candidate ID)
+2. Senate LDA lobbying disclosures — NEXT (lda.senate.gov/api/v1/, no key required)
+3. IRS 990 — nonprofit financials, foundation money flows (ProPublica Nonprofit Explorer API)
+4. Congress.gov voting record — (API key pending)
+5. Biblical concordance — public domain, for claims made in name of religion
+6. Wikipedia/Wikidata — basic biography, stated positions, known affiliations
+7. Court records — PACER (harder but public)
+8. Existing fact-check databases — PolitiFact, Snopes APIs
 
-## Brown Institute for Media Innovation (grant)
+Distribution layer (future):
+- Shareable receipt URLs
+- Browser extension — surfaces Frame receipts next to content on any platform
+- Open embed format — receipt card that travels with the claim
 
-- **What:** Grant funding for media innovation projects.
-- **Amount:** Up to **$150,000**.
-- **Deadline:** **April 1, 2026** (confirm on official call; plan for time zone / portal cutoff).
-- **Submit:** **brown.submittable.com**
-- **Requirement:** A **demo URL** (public) is expected with the application — the Frame demo + signed Manchin receipt should satisfy that bar once deployed.
+## Live URLs
+- API: https://frame-2yxu.onrender.com
+- Demo UI: https://delightful-cucurucho-b09e70.netlify.app
+- GitHub: https://github.com/Swixixle/FRAME
 
-## Repo map (quick)
+## Current Build Status
+- Ed25519 signing pipeline: COMPLETE (5/5 tests passing)
+- JCS canonicalization (RFC 8785): COMPLETE
+- Tamper detection: COMPLETE
+- Live FEC adapter: COMPLETE
+- POST /v1/verify-receipt: COMPLETE and working on Render
+- POST /v1/generate-receipt: COMPLETE locally, PEM key format issue on Render in progress
+- Demo UI with evidence chain, source links, rabbit hole: COMPLETE on Netlify
 
-| Path | Role |
-|------|------|
-| `packages/types` | Shared TS types |
-| `packages/signing` | Ed25519 + JCS signing |
-| `packages/narrative` | Banned words, domain whitelist, narrative validation |
-| `packages/entity` | Disambiguation + confidence floor |
-| `packages/sources` | FEC, OpenSecrets, ProPublica, lobbying, EDGAR adapters (stubs) |
-| `apps/api` | FastAPI verification (`/v1/verify-receipt`, JCS via Node) |
-| `apps/web` | Static demo; loads `demo-payload.json` when served over HTTP |
-| `scripts/seed-demo.ts` | Sign Manchin fixture → `apps/web/demo-payload.json` |
-| `scripts/jcs-stringify.mjs` | JCS helper for Python (must match TS) |
-| `.github/copilot-instructions.md` | Agent rules (same three governance rules) |
+## Immediate Next Task
+Fix FRAME_PRIVATE_KEY format on Render so /v1/generate-receipt works in production.
+Key stored as base64 in Render env vars. FRAME_KEY_FORMAT=base64.
 
-## Secrets (never commit)
+## After That
+Build Senate LDA lobbying adapter:
+https://lda.senate.gov/api/v1/
+No API key required.
+Cross-reference with FEC candidate ID: who lobbied this senator, how much, 
+on what issues, in what timeframe relative to their votes.
 
-- `apps/api/.env` — `FRAME_PRIVATE_KEY`, `FRAME_PUBLIC_KEY` (PEM, JSON-escaped in file).
-- Regenerate with `npm run generate-keys` if needed; re-run `npx tsx scripts/seed-demo.ts` after changing keys.
+## Key Technical Notes
+- FEC candidate ID for Manchin: S0WV00090
+- FEC candidate ID for Sanders: S4VT00033
+- FEC API base URL: https://api.open.fec.gov/v1/
+- Private key in Render: base64 format, FRAME_KEY_FORMAT=base64
+- Local keys in apps/api/.env (gitignored)
+- demo-payload.json is hand-authored Manchin fossil fuel fixture
+- seed-demo.ts regenerates demo-payload.json from local keys
 
----
+## Funding Notes
+Brown Institute requires Columbia/Stanford affiliation — not eligible.
+Better targets: Knight Foundation Prototype Fund, Mozilla Technology Fund,
+investigative journalism fellowships, The Markup, Freedom of the Press Foundation.
 
-*Memory in chat tools resets; this file does not. Update this doc when milestones or deadlines change.*
+## Session History
+Built in one overnight session March 19-20 2026.
+Started: broken 500 error, placeholder payload.
+Ended: live FEC pipeline, cryptographic verification, full UI with evidence chain.
