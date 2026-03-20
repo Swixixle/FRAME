@@ -144,7 +144,10 @@ if _web_dir.is_dir():
 
 @app.get("/demo")
 async def demo_redirect() -> FileResponse:
-    return FileResponse(str(_repo_root() / "apps" / "web" / "index.html"))
+    return FileResponse(
+        str(_repo_root() / "apps" / "web" / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/")
