@@ -17,7 +17,9 @@ from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from fastapi import FastAPI, HTTPException
+from datetime import datetime, timezone
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -358,6 +360,103 @@ def generate_wikidata_receipt(req: WikidataRequest) -> dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail={"message": "generate-wikidata-receipt failed", "stderr": err},
+        )
+
+    try:
+        return json.loads(proc.stdout.strip())
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
+
+
+@app.post("/v1/analyze-media")
+async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
+    contents = await file.read()
+
+    # Step 1 — hash the file
+    file_hash = hashlib.sha256(contents).hexdigest()
+    file_size = len(contents)
+    content_type = file.content_type or "unknown"
+    filename = file.filename or "unknown"
+
+    # Step 2 — run AI detection via Hive API if key available
+    hive_key = os.environ.get("HIVE_API_KEY", "")
+    detection_result: dict[str, Any] | None = None
+
+    if hive_key:
+        try:
+            b64 = base64.b64encode(contents).decode()
+            payload = json.dumps({"image": {"data": b64}}).encode()
+            req = urllib.request.Request(
+                "https://api.thehive.ai/api/v2/task/sync",
+                data=payload,
+                headers={
+                    "Authorization": f"Token {hive_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                hive_data = json.loads(resp.read())
+                classes = hive_data.get("status", [{}])[0].get("response", {}).get("output", [{}])[0].get("classes", [])
+                ai_score = next(
+                    (c.get("score", 0) for c in classes if c.get("class") == "ai_generated"),
+                    None,
+                )
+                detection_result = {
+                    "detector": "hive",
+                    "ai_generated_score": ai_score,
+                    "classes": classes[:5],
+                }
+        except Exception as e:  # noqa: BLE001
+            detection_result = {"detector": "hive", "error": str(e)}
+    else:
+        detection_result = {
+            "detector": "none",
+            "note": "No HIVE_API_KEY configured — set it in Render environment to enable AI detection",
+        }
+
+    return {
+        "fileHash": file_hash,
+        "fileName": filename,
+        "fileSize": file_size,
+        "contentType": content_type,
+        "detection": detection_result,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "note": "Submit this hash and detection result to /v1/sign-media-analysis to get a signed Frame receipt",
+    }
+
+
+class MediaAnalysisRequest(BaseModel):
+    fileHash: str
+    fileName: str
+    fileSize: int
+    contentType: str
+    detection: dict[str, Any]
+    timestamp: str
+    claimText: str | None = None
+
+
+@app.post("/v1/sign-media-analysis")
+def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
+    root = _repo_root()
+    script = root / "scripts" / "sign-media-analysis.ts"
+    if not script.is_file():
+        raise HTTPException(status_code=500, detail="sign-media-analysis script missing")
+
+    proc = subprocess.run(
+        ["npx", "tsx", str(script)],
+        input=req.model_dump_json(),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=str(root),
+        env={**os.environ},
+        timeout=60,
+    )
+
+    if proc.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail={"message": "sign-media-analysis failed", "stderr": proc.stderr[-2000:]},
         )
 
     try:
