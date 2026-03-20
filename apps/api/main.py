@@ -10,6 +10,8 @@ import hashlib
 import json
 import os
 import subprocess
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -163,6 +165,35 @@ def adapters() -> dict[str, list[str]]:
         "kinds": ["fec", "opensecrets", "propublica", "lobbying", "edgar", "manual"],
         "note": "Adapters normalize third-party data into Frame SourceRecord rows.",
     }
+
+
+@app.get("/v1/fec-search")
+async def fec_search(name: str) -> dict[str, Any]:
+    """Resolve a human name to FEC candidate rows (OpenFEC `q=` search)."""
+    fec_key = os.environ.get("FEC_API_KEY", "DEMO_KEY")
+    q = urllib.parse.quote(name)
+    url = f"https://api.open.fec.gov/v1/candidates/?q={q}&per_page=5&api_key={fec_key}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Frame/1.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        results = (data.get("results") or [])[:5]
+        return {
+            "results": [
+                {
+                    "candidateId": r.get("candidate_id"),
+                    "name": r.get("name"),
+                    "office": r.get("office_full"),
+                    "state": r.get("state"),
+                    "party": r.get("party_full"),
+                    "electionYears": r.get("election_years", []),
+                }
+                for r in results
+                if r.get("candidate_id")
+            ]
+        }
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/v1/generate-receipt")

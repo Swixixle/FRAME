@@ -291,8 +291,22 @@ async function runSearch(){
   document.getElementById('search-btn').disabled=true;
   let body={},endpoint='';
   if(currentType==='fec'){
-    const candidateId=document.getElementById('fec-candidate-id').value.trim();
-    body={candidateId:candidateId||query};
+    let candidateId=document.getElementById('fec-candidate-id').value.trim();
+    if(!candidateId){
+      setStatus('Searching FEC for candidate...');
+      try{
+        const sr=await fetch(`${API_BASE}/v1/fec-search?name=${encodeURIComponent(query)}`);
+        if(sr.ok){
+          const sd=await sr.json();
+          if(sd.results?.length>0){
+            candidateId=sd.results[0].candidateId;
+            setStatus(`Found: ${sd.results[0].name} — pulling FEC data...`);
+          }
+        }
+      }catch(e){/* fall through */}
+    }
+    if(!candidateId){clearStatus();showError('Could not find FEC candidate for that name. Try adding a FEC Candidate ID in the field below.');document.getElementById('search-btn').disabled=false;return;}
+    body={candidateId};
     endpoint='/v1/generate-receipt';
     setStatus('Pulling live FEC contribution data...');
   }else if(currentType==='990'){
