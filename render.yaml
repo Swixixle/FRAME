@@ -2,10 +2,13 @@ services:
   - type: web
     name: frame-api
     runtime: python
-    rootDir: apps/api
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    rootDir: .
+    buildCommand: npm ci && pip install -r apps/api/requirements.txt
+    startCommand: cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: FRAME_REPO_ROOT
+        value: /opt/render/project/src
+        sync: false
       - key: FRAME_PRIVATE_KEY
         sync: false
       - key: FRAME_PUBLIC_KEY

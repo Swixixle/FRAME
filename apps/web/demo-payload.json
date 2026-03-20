@@ -1,11 +1,11 @@
 {
   "schemaVersion": "1.0.0",
-  "receiptId": "550e8400-e29b-41d4-a716-446655440000",
+  "receiptId": "c3d8f1a2-9b0e-4c7a-9d6f-1a2b3c4d5e6f",
   "createdAt": "2024-01-15T12:00:00.000Z",
   "claims": [
     {
       "id": "claim-1",
-      "statement": "A senator received campaign contributions from donors in a reporting period covered by FEC filings.",
+      "statement": "Senator Joseph Manchin III (WV) appears in OpenSecrets with candidate id N00032838; FEC committee C00783746 appears in commission records as a related PAC committee.",
       "assertedAt": "2024-01-10T00:00:00.000Z"
     }
   ],
@@ -46,11 +46,11 @@
   ],
   "narrative": [
     {
-      "text": "The FEC lists committee C00783746 with filings available on the commission’s site.",
+      "text": "The FEC lists committee C00783746 with filings; this committee is cited in reporting on PAC activity tied to Senator Manchin.",
       "sourceId": "src-fec-c00783746"
     },
     {
-      "text": "OpenSecrets publishes summary totals for candidate id N00032838.",
+      "text": "OpenSecrets lists Senator Manchin with candidate id N00032838 and publishes summary contribution totals for that id.",
       "sourceId": "src-os-n00032838"
     },
     {
@@ -58,7 +58,7 @@
       "sourceId": "src-lda-example"
     }
   ],
-  "contentHash": "5385415e9b0f321c4dcdc678ecab151dd9306ed995c5a8701e137c2a0670b848",
-  "publicKey": "MCowBQYDK2VwAyEAUc6SGccukqSC/QqvT+F6XO6L0luOsMuWBK2Av19XPy8=",
-  "signature": "XWyXXHUGctLVhvRseOA6lZsxODJD0QB7WZ8QHeugApFw6pE+Yzk1YlF8itQk/ixu4djkMF0I/zizi9oDvBnPDA=="
+  "contentHash": "c86ce928b94700cf65eede21e09ea91f7d0786e1de195bb37364df6af277a82e",
+  "publicKey": "MCowBQYDK2VwAyEA31C8Qe4Zd6uOMPCisuXNJD8iysRaRRysFOEU1/ICniw=",
+  "signature": "X0VDfQGqm9iziDMReieS3dEH7HlWBIZv7slbBNKaihyT5gnm1z6TjLLy2IyRrtyuD7c2Pc14Sl9UmYNEGi5aDg=="
 }
