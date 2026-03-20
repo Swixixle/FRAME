@@ -7,7 +7,8 @@ function getPrivateKeyPem(): string {
   const raw = process.env.FRAME_PRIVATE_KEY ?? "";
   if (!raw) throw new Error("Missing FRAME_PRIVATE_KEY in environment");
   if (format === "base64") {
-    return Buffer.from(raw.trim(), "base64").toString("utf8");
+    const decoded = Buffer.from(raw.trim(), "base64").toString("utf8");
+    return decoded.replace(/\\n/g, "\n");
   }
   let pem = raw;
   if (!pem.includes("\n")) {
