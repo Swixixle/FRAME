@@ -1,4 +1,4 @@
-import { buildLive990Receipt } from '../packages/sources/index.js';
+import { buildWikidataReceipt } from '../packages/sources/index.js';
 
-const result = await buildLive990Receipt('Gates Foundation', '562618866');
+const result = await buildWikidataReceipt('Tucker Carlson');
 console.log(JSON.stringify(result.narrative, null, 2));

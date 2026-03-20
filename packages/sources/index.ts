@@ -752,6 +752,238 @@ export async function buildLive990Receipt(
   };
 }
 
+export async function buildWikidataReceipt(
+  personName: string,
+  wikidataId?: string,
+): Promise<FrameReceiptPayload> {
+  const base = "https://www.wikidata.org/w/api.php";
+  const sources: SourceRecord[] = [];
+  const narrative: Array<{ text: string; sourceId: string }> = [];
+
+  let resolvedId = wikidataId ?? "";
+  let resolvedName = personName;
+
+  const searchSourceId = `wikidata-search-${personName.replace(/\s+/g, "-").toLowerCase()}`;
+
+  // Step 1 — search for person if no ID provided
+  if (!resolvedId) {
+    try {
+      const searchUrl = `${base}?action=wbsearchentities&search=${encodeURIComponent(personName)}&language=en&format=json&limit=1`;
+      const r = await fetch(searchUrl);
+      const d = (await r.json()) as {
+        search?: Array<{ id: string; label?: string; description?: string }>;
+      };
+      const first = d.search?.[0];
+      if (first) {
+        resolvedId = first.id;
+        resolvedName = first.label ?? personName;
+      }
+      sources.push({
+        id: searchSourceId,
+        adapter: "manual",
+        url: searchUrl,
+        title: `Wikidata: search for "${personName}"`,
+        retrievedAt: nowIso(),
+        externalRef: resolvedId || personName,
+        metadata: {
+          query: personName,
+          resolvedId: resolvedId || null,
+          description: d.search?.[0]?.description ?? null,
+        },
+      });
+    } catch {
+      /* continue */
+    }
+  }
+
+  if (!resolvedId) {
+    narrative.push({
+      text: `Wikidata returned no results for "${personName}" at signing time.`,
+      sourceId: sources[0]?.id ?? searchSourceId,
+    });
+    return {
+      schemaVersion: "1.0.0",
+      receiptId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      claims: [
+        {
+          id: "claim-1",
+          statement: `Wikidata public record for ${personName}`,
+          assertedAt: new Date().toISOString(),
+        },
+      ],
+      sources,
+      narrative,
+      contentHash: "",
+    };
+  }
+
+  // Step 2 — fetch entity data
+  try {
+    const entityUrl = `${base}?action=wbgetentities&ids=${resolvedId}&languages=en&props=claims|labels|descriptions|sitelinks&format=json`;
+    const r = await fetch(entityUrl);
+    const d = (await r.json()) as {
+      entities?: Record<
+        string,
+        {
+          labels?: { en?: { value?: string } };
+          descriptions?: { en?: { value?: string } };
+          claims?: Record<
+            string,
+            Array<{
+              mainsnak?: {
+                snaktype?: string;
+                datavalue?: {
+                  value?: unknown;
+                  type?: string;
+                };
+              };
+            }>
+          >;
+          sitelinks?: { enwiki?: { title?: string } };
+        }
+      >;
+    };
+
+    const entity = d.entities?.[resolvedId];
+    if (!entity) throw new Error("Entity not found");
+
+    resolvedName = entity.labels?.en?.value ?? resolvedName;
+    const description = entity.descriptions?.en?.value ?? "";
+    const wikipediaTitle = entity.sitelinks?.enwiki?.title;
+    const claims = entity.claims ?? {};
+
+    sources.push({
+      id: `wikidata-entity-${resolvedId}`,
+      adapter: "manual",
+      url: `https://www.wikidata.org/wiki/${resolvedId}`,
+      title: `Wikidata: ${resolvedName} (${resolvedId})`,
+      retrievedAt: nowIso(),
+      externalRef: resolvedId,
+      metadata: {
+        resolvedId,
+        resolvedName,
+        description: description || null,
+        wikipediaTitle: wikipediaTitle ?? null,
+      },
+    });
+
+    const sourceId = `wikidata-entity-${resolvedId}`;
+
+    if (description) {
+      narrative.push({
+        text: `According to Wikidata, ${resolvedName} is described as: "${description}".`,
+        sourceId,
+      });
+    }
+
+    // Resolve entity IDs to labels with a single batch call
+    const allEntityIds = [
+      ...(claims["P106"] ?? []).map(
+        (c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id,
+      ),
+      ...(claims["P108"] ?? []).map(
+        (c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id,
+      ),
+      ...(claims["P102"] ?? []).map(
+        (c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id,
+      ),
+    ]
+      .filter(Boolean)
+      .slice(0, 20) as string[];
+
+    let labelMap: Record<string, string> = {};
+    if (allEntityIds.length > 0) {
+      try {
+        const labelUrl = `${base}?action=wbgetentities&ids=${allEntityIds.join("|")}&languages=en&props=labels&format=json`;
+        const lr = await fetch(labelUrl);
+        const ld = (await lr.json()) as {
+          entities?: Record<string, { labels?: { en?: { value?: string } } }>;
+        };
+        for (const [id, ent] of Object.entries(ld.entities ?? {})) {
+          labelMap[id] = ent.labels?.en?.value ?? id;
+        }
+      } catch {
+        /* use IDs as fallback */
+      }
+    }
+
+    // Occupations (P106)
+    const occupationIds = (claims["P106"] ?? [])
+      .map((c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id)
+      .filter(Boolean) as string[];
+    const occupationLabels = occupationIds.map((id) => labelMap[id] ?? id).slice(0, 5);
+    if (occupationLabels.length > 0) {
+      narrative.push({
+        text: `According to Wikidata, ${resolvedName}'s listed occupations include: ${occupationLabels.join(", ")}.`,
+        sourceId,
+      });
+    }
+
+    // Employers (P108)
+    const employerIds = (claims["P108"] ?? [])
+      .map((c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id)
+      .filter(Boolean) as string[];
+    const employerLabels = employerIds.map((id) => labelMap[id] ?? id).slice(0, 5);
+    if (employerLabels.length > 0) {
+      narrative.push({
+        text: `According to Wikidata, ${resolvedName}'s listed employers include: ${employerLabels.join(", ")}.`,
+        sourceId,
+      });
+    }
+
+    // Political party (P102)
+    const partyIds = (claims["P102"] ?? [])
+      .map((c) => (c.mainsnak?.datavalue?.value as { id?: string })?.id)
+      .filter(Boolean) as string[];
+    const partyLabels = partyIds.map((id) => labelMap[id] ?? id).slice(0, 3);
+    if (partyLabels.length > 0) {
+      narrative.push({
+        text: `According to Wikidata, ${resolvedName}'s listed political party affiliation(s) include: ${partyLabels.join(", ")}.`,
+        sourceId,
+      });
+    }
+
+    // Wikipedia link
+    if (wikipediaTitle) {
+      sources.push({
+        id: `wikipedia-${resolvedId}`,
+        adapter: "manual",
+        url: `https://en.wikipedia.org/wiki/${encodeURIComponent(wikipediaTitle.replace(/ /g, "_"))}`,
+        title: `Wikipedia: ${wikipediaTitle}`,
+        retrievedAt: nowIso(),
+        externalRef: resolvedId,
+        metadata: { title: wikipediaTitle },
+      });
+      narrative.push({
+        text: `A Wikipedia article exists for ${resolvedName} at https://en.wikipedia.org/wiki/${encodeURIComponent(wikipediaTitle.replace(/ /g, "_"))}.`,
+        sourceId: `wikipedia-${resolvedId}`,
+      });
+    }
+  } catch {
+    narrative.push({
+      text: `Wikidata entity data for ${resolvedId} could not be retrieved at signing time.`,
+      sourceId: `wikidata-entity-${resolvedId}`,
+    });
+  }
+
+  return {
+    schemaVersion: "1.0.0",
+    receiptId: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    claims: [
+      {
+        id: "claim-1",
+        statement: `Wikidata public record for ${resolvedName} (${resolvedId})`,
+        assertedAt: new Date().toISOString(),
+      },
+    ],
+    sources,
+    narrative,
+    contentHash: "",
+  };
+}
+
 /** OpenSecrets — money-in-politics summaries (illustrative stub). */
 export async function fetchOpenSecretsSummary(
   query: SourceQuery,
