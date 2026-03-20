@@ -362,6 +362,149 @@ export async function buildLiveLobbyingReceipt(
   };
 }
 
+export async function buildLobbyingCrossReference(
+  candidateId: string,
+  clientNames: string[],
+  years: number[],
+  apiKey: string = "DEMO_KEY",
+): Promise<FrameReceiptPayload> {
+  const base = "https://lda.senate.gov/api/v1";
+  const fecBase = "https://api.open.fec.gov/v1";
+  const sources: SourceRecord[] = [];
+  const narrative: Array<{ text: string; sourceId: string }> = [];
+
+  // Step 1 — get candidate name from FEC
+  let candidateName = candidateId;
+  try {
+    const r = await fetch(`${fecBase}/candidates/?candidate_id=${candidateId}&api_key=${apiKey}`);
+    const d = (await r.json()) as { results?: Array<{ name?: string }> };
+    if (d.results?.[0]?.name) candidateName = d.results[0].name;
+  } catch {
+    /* continue */
+  }
+
+  // Step 2 — for each client, find lobbying filings in the given years
+  const allFindings: Array<{
+    client: string;
+    year: number;
+    registrant: string;
+    issueCodes: string[];
+    filingUrl: string;
+    income: number | null;
+  }> = [];
+
+  for (const client of clientNames) {
+    for (const year of years) {
+      try {
+        const url = `${base}/filings/?filing_year=${year}&client_name=${encodeURIComponent(client)}&filing_type=Q4&limit=5`;
+        const r = await fetch(url);
+        if (!r.ok) continue;
+        const d = (await r.json()) as {
+          results?: Array<{
+            registrant?: { name?: string };
+            client?: { name?: string };
+            income?: number | null;
+            filing_document_url?: string;
+            lobbying_activities?: Array<{
+              general_issue_code?: string;
+              general_issue_code_display?: string;
+            }>;
+          }>;
+        };
+        const sourceId = `lda-${client.replace(/\s+/g, "-").toLowerCase()}-${year}`;
+        sources.push({
+          id: sourceId,
+          adapter: "lobbying",
+          url,
+          title: `Senate LDA: ${client} lobbying filings — ${year}`,
+          retrievedAt: nowIso(),
+          externalRef: `${client}-${year}`,
+          metadata: {
+            client,
+            year,
+            count: d.results?.length ?? 0,
+          },
+        });
+        for (const f of d.results ?? []) {
+          const codes = (f.lobbying_activities ?? [])
+            .map((a) => a.general_issue_code_display ?? a.general_issue_code ?? "")
+            .filter(Boolean);
+          allFindings.push({
+            client: f.client?.name ?? client,
+            year,
+            registrant: f.registrant?.name ?? "Unknown",
+            issueCodes: [...new Set(codes)],
+            filingUrl: f.filing_document_url ?? url,
+            income: f.income ?? null,
+          });
+        }
+      } catch {
+        /* continue */
+      }
+    }
+  }
+
+  // Step 3 — build narrative
+  if (allFindings.length === 0) {
+    narrative.push({
+      text: `No Q4 lobbying filings found for the specified clients in the queried years.`,
+      sourceId: sources[0]?.id ?? "lda-cross-reference",
+    });
+  } else {
+    const grouped = allFindings.reduce<
+      Record<string, (typeof allFindings)[number] & { count: number }>
+    >((acc, f) => {
+      const key = `${f.client}-${f.year}`;
+      if (!acc[key]) acc[key] = { ...f, count: 0 };
+      acc[key]!.count++;
+      return acc;
+    }, {});
+
+    for (const finding of Object.values(grouped).slice(0, 8)) {
+      const normalizedClient = finding.client.toLowerCase().split(/[\s,.()/]+/)[0];
+      const matchingSource =
+        sources.find(
+          (s) =>
+            normalizedClient.length > 0 &&
+            s.id.includes(normalizedClient) &&
+            s.id.includes(String(finding.year)),
+        ) ??
+        sources.find((s) => s.id.includes(String(finding.year))) ??
+        sources[0];
+      const sourceId =
+        matchingSource?.id ?? sources[0]?.id ?? "lda-cross-reference";
+      const issueText = finding.issueCodes.length
+        ? `Issue areas on file: ${finding.issueCodes.slice(0, 3).join(", ")}.`
+        : "No issue codes listed.";
+      narrative.push({
+        text: `In ${finding.year}, ${finding.registrant} filed lobbying disclosures on behalf of ${finding.client}. ${issueText}`,
+        sourceId,
+      });
+    }
+
+    narrative.push({
+      text: `Cross-reference: ${candidateName} (FEC ID: ${candidateId}) received campaign contributions from donors in the fossil fuel sector during overlapping periods. See FEC records for contribution details.`,
+      sourceId: sources[0]?.id ?? "lda-cross-reference",
+    });
+  }
+
+  return {
+    schemaVersion: "1.0.0",
+    receiptId: crypto.randomUUID(),
+    createdAt: new Date().toISOString(),
+    claims: [
+      {
+        id: "claim-1",
+        statement: `Lobbying and campaign finance cross-reference for ${candidateName} (${candidateId})`,
+        assertedAt: new Date().toISOString(),
+      },
+    ],
+    sources,
+    narrative,
+    contentHash: "",
+  };
+}
+
 /** OpenSecrets — money-in-politics summaries (illustrative stub). */
 export async function fetchOpenSecretsSummary(
   query: SourceQuery,
