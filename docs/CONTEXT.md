@@ -33,10 +33,13 @@ packages/sources — data adapters (FEC live, others stubbed)
 packages/entity — disambiguation
 apps/api — FastAPI: /v1/verify-receipt, /v1/generate-receipt
 apps/web — static demo UI
+apps/macos — FrameCapture.app + `scripts/frame-capture.sh` (screen region → signed receipt URL)
+apps/extension — Chrome/Brave MV3 extension (toolbar + context menu → analyze → sign → receipt tab)
 scripts/generate-keys.ts — key generation (--write-env flag)
 scripts/seed-demo.ts — signs Manchin fixture for demo
 scripts/generate-receipt.ts — called by API to sign live FEC receipts
 scripts/test-fec.ts — local FEC API testing
+scripts/frame-capture.sh — macOS: region capture → POST /v1/analyze-and-verify → clipboard + notification
 
 ## Architecture — Planned Extensions
 The schema is already general. Sources accept any URL. Claims accept any statement.
@@ -64,8 +67,9 @@ Media / disinformation layer (extends roadmap):
 9. Media hash ledger — store file hashes to track viral spread across accounts
 
 Distribution layer (future):
-- Shareable receipt URLs
-- Browser extension — surfaces Frame receipts next to content on any platform
+- Shareable receipt URLs — **DONE** (`GET /receipt/:id`, `receiptUrl` on signed responses)
+- macOS menu bar capture — **DONE** (`scripts/frame-capture.sh`, `apps/macos/FrameCapture.app`; menu bar via Platypus or SwiftBar)
+- Browser extension — **DONE** (`apps/extension/` — toolbar popup, “Verify with Frame” on images, receipt tab)
 - Open embed format — receipt card that travels with the claim
 
 ## Live URLs
@@ -85,10 +89,12 @@ Distribution layer (future):
 - POST /v1/sign-media-analysis: COMPLETE — signs full media analysis as Frame receipt including verified source hashes
 - GET /v1/ledger: COMPLETE — SQLite-backed perceptual hash ledger, exact + Hamming distance matching, first-seen timestamps
 - Media upload UI: COMPLETE — drag and drop on /demo, shows claim type, entities, source verification status, content hash, page title
+- Chrome/Brave extension: COMPLETE — `apps/extension/` (MV3, no build step; toolbar + image context menu → receipt tab)
 - Persistent ledger: SQLite at /tmp/frame_ledger.db (resets on redeploy until Render Pro + PostgreSQL)
 - Known gap: source URLs are Claude suggestions — some return 404/403. Need URL resolver that only signs verified sources.
 - Known gap: ledger resets on redeploy. Fix: Render Pro PostgreSQL (swap DATABASE_URL, same code)
 - Combined media pipeline: hash → detect → verify sources → ledger → sign → verify
+- **Gap 3 (OCR → router → adapters):** `apps/api/router.py` + `adapters_media.py` — after Claude extracts claims, `route_claim()` selects fec / irs990 (ProPublica) / lda / congress / wikidata; results on each claim as `adapterResults`; `sign-media-analysis.ts` adds adapter rows to `sources[]` with `metadata.adapterData`. **`POST /v1/analyze-and-verify`** = analyze + route + sign in one call. **`CONGRESS_API_KEY`** required for Congress.gov bill search (free at api.congress.gov).
 
 ## Immediate Next Task
 Fix FRAME_PRIVATE_KEY format on Render so /v1/generate-receipt works in production.

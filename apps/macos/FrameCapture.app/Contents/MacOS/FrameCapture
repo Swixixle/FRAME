@@ -1,0 +1,5 @@
+#!/bin/bash
+# Launcher — runs embedded script (no repo path required).
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+SCRIPT_DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+exec bash "$SCRIPT_DIR/frame-capture.sh" "$@"

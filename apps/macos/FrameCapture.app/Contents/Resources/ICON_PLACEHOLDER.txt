@@ -1,0 +1,2 @@
+Optional: add AppIcon.icns to this Resources folder and set CFBundleIconFile in Info.plist.
+See ../README.md (Icon placeholder section).

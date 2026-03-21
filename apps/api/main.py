@@ -5,6 +5,7 @@ npm package as TypeScript (Node subprocess). Never use JSON.stringify-equivalent
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -24,9 +25,12 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from adapters_media import dispatch_adapter
+from router import route_claim
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JCS_SCRIPT = REPO_ROOT / "scripts" / "jcs-stringify.mjs"
@@ -97,6 +101,8 @@ class SourceRecord(BaseModel):
 
 
 class SignedReceipt(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     schemaVersion: str
     receiptId: str
     createdAt: str
@@ -170,8 +176,8 @@ async def health() -> dict[str, str]:
 @app.get("/v1/adapters")
 def adapters() -> dict[str, list[str]]:
     return {
-        "kinds": ["fec", "opensecrets", "propublica", "lobbying", "edgar", "manual"],
-        "note": "Adapters normalize third-party data into Frame SourceRecord rows.",
+        "kinds": ["fec", "opensecrets", "propublica", "lobbying", "edgar", "manual", "congress", "wikidata"],
+        "note": "Adapters normalize third-party data into Frame SourceRecord rows. Gap 3 routes OCR claims to fec/propublica/lobbying/congress/wikidata.",
     }
 
 
@@ -236,7 +242,7 @@ def generate_receipt(body: GenerateReceiptRequest) -> dict[str, Any]:
             status_code=502,
             detail=f"invalid JSON from generate-receipt: {exc}",
         ) from exc
-    return out
+    return _with_receipt_url(out)
 
 
 @app.post("/v1/generate-lobbying-receipt")
@@ -264,7 +270,7 @@ def generate_lobbying_receipt(req: LobbyingRequest) -> dict[str, Any]:
         )
 
     try:
-        return json.loads(proc.stdout.strip())
+        return _with_receipt_url(json.loads(proc.stdout.strip()))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
 
@@ -306,7 +312,7 @@ def generate_combined_receipt(req: CombinedReceiptRequest) -> dict[str, Any]:
         )
 
     try:
-        return json.loads(proc.stdout.strip())
+        return _with_receipt_url(json.loads(proc.stdout.strip()))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
 
@@ -336,7 +342,7 @@ def generate_990_receipt(req: NineNinetyRequest) -> dict[str, Any]:
         )
 
     try:
-        return json.loads(proc.stdout.strip())
+        return _with_receipt_url(json.loads(proc.stdout.strip()))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
 
@@ -366,7 +372,7 @@ def generate_wikidata_receipt(req: WikidataRequest) -> dict[str, Any]:
         )
 
     try:
-        return json.loads(proc.stdout.strip())
+        return _with_receipt_url(json.loads(proc.stdout.strip()))
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
 
@@ -391,10 +397,52 @@ def _init_db() -> None:
             """
         )
         conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS receipts (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
         conn.close()
 
 
 _init_db()
+
+
+def _frame_public_base_url() -> str:
+    return os.environ.get("FRAME_PUBLIC_BASE_URL", "https://frame-2yxu.onrender.com").rstrip("/")
+
+
+def _store_signed_receipt(data: dict[str, Any]) -> None:
+    rid = data.get("receiptId")
+    if not rid:
+        return
+    created = str(data.get("createdAt") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    payload = json.dumps(data)
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO receipts (id, created_at, payload) VALUES (?, ?, ?)",
+                (str(rid), created, payload),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _with_receipt_url(data: dict[str, Any]) -> dict[str, Any]:
+    """Persist signed receipt and add shareable receiptUrl (not part of cryptographic payload)."""
+    _store_signed_receipt(data)
+    rid = data.get("receiptId")
+    if not rid:
+        return data
+    base = _frame_public_base_url()
+    return {**data, "receiptUrl": f"{base}/receipt/{rid}"}
 
 
 def _verification_reason_from_http(code: int) -> str:
@@ -552,15 +600,42 @@ def get_ledger() -> dict[str, Any]:
             conn.close()
 
 
-@app.post("/v1/analyze-media")
-async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
-    contents = await file.read()
+@app.get("/v1/receipt/{receipt_id}")
+def get_receipt_json(receipt_id: str) -> dict[str, Any]:
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute("SELECT payload FROM receipts WHERE id = ?", (receipt_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Receipt not found")
+            return json.loads(row["payload"])
+        finally:
+            conn.close()
 
+
+@app.get("/receipt/{receipt_id}", response_class=HTMLResponse)
+def receipt_share_page(receipt_id: str) -> HTMLResponse:
+    """Shareable HTML view — client loads receipt JSON from GET /v1/receipt/{id}."""
+    path = _repo_root() / "apps" / "web" / "receipt.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="receipt page template missing")
+    return HTMLResponse(
+        content=path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+async def _build_analyze_media_response(
+    contents: bytes,
+    filename: str,
+    content_type: str,
+) -> dict[str, Any]:
     # Step 1 — cryptographic hash
     file_hash = hashlib.sha256(contents).hexdigest()
     file_size = len(contents)
-    content_type = file.content_type or "unknown"
-    filename = file.filename or "unknown"
+    content_type = content_type or "unknown"
+    filename = filename or "unknown"
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     # Step 2 — perceptual hash (survives re-compression, cropping, watermarks)
@@ -623,7 +698,7 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
                                     '  "claims": [\n'
                                     "    {\n"
                                     '      "text": "the specific claim",\n'
-                                    '      "type": "one of: government_action | financial | death_toll | election | legal | scientific | corporate | general",\n'
+                                    '      "type": "one of: government_action | financial | death_toll | election | legal | scientific | corporate | lobbying | biographical | general",\n'
                                     '      "entities": ["named people, orgs, or programs mentioned"],\n'
                                     '      "primary_sources": [\n'
                                     "        {\n"
@@ -699,6 +774,25 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
         verified_claim_objects.append({**claim_obj, "primary_sources": verified_sources})
     extracted_claim_objects = verified_claim_objects
 
+    # Step 3c — Gap 3: route claims to public-record adapters (never blocks receipt)
+    for claim_obj in extracted_claim_objects:
+        if not isinstance(claim_obj, dict):
+            continue
+        specs = route_claim(claim_obj)
+        results: list[dict[str, Any]] = []
+        for spec in specs:
+            adapter = str(spec.get("adapter") or "")
+            try:
+                data = await asyncio.to_thread(
+                    dispatch_adapter,
+                    adapter,
+                    spec.get("params") or {},
+                )
+                results.append({"adapter": adapter, "data": data, "error": None})
+            except Exception as e:  # noqa: BLE001
+                results.append({"adapter": adapter, "data": None, "error": str(e)[:500]})
+        claim_obj["adapterResults"] = results
+
     # Step 4 — check perceptual hash ledger for prior appearances
     ledger_match: dict[str, Any] | None = None
     if perceptual_hash:
@@ -756,8 +850,18 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
         "extractedClaimObjects": extracted_claim_objects,
         "detection": detection_result,
         "ledgerMatch": ledger_match,
-        "note": "Submit to /v1/sign-media-analysis to get a signed Frame receipt",
+        "note": "Submit to /v1/sign-media-analysis or POST /v1/analyze-and-verify for a signed Frame receipt",
     }
+
+
+@app.post("/v1/analyze-media")
+async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
+    contents = await file.read()
+    return await _build_analyze_media_response(
+        contents,
+        file.filename or "unknown",
+        file.content_type or "unknown",
+    )
 
 
 class MediaAnalysisRequest(BaseModel):
@@ -776,8 +880,7 @@ class MediaAnalysisRequest(BaseModel):
     claimText: str | None = None
 
 
-@app.post("/v1/sign-media-analysis")
-def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
+def _sign_media_analysis_core(req: MediaAnalysisRequest) -> dict[str, Any]:
     root = _repo_root()
     script = root / "scripts" / "sign-media-analysis.ts"
     if not script.is_file():
@@ -791,7 +894,7 @@ def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
         check=False,
         cwd=str(root),
         env={**os.environ},
-        timeout=60,
+        timeout=120,
     )
 
     if proc.returncode != 0:
@@ -804,6 +907,29 @@ def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
         return json.loads(proc.stdout.strip())
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=500, detail=f"Invalid JSON: {exc}") from exc
+
+
+@app.post("/v1/sign-media-analysis")
+def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
+    return _with_receipt_url(_sign_media_analysis_core(req))
+
+
+@app.post("/v1/analyze-and-verify")
+async def analyze_and_verify(file: UploadFile = File(...)) -> dict[str, Any]:
+    """One-shot: analyze media → route claims → adapter calls → signed receipt + receiptUrl."""
+    contents = await file.read()
+    body = await _build_analyze_media_response(
+        contents,
+        file.filename or "unknown",
+        file.content_type or "unknown",
+    )
+    allowed = set(MediaAnalysisRequest.model_fields.keys())
+    payload = {k: v for k, v in body.items() if k in allowed}
+    try:
+        req = MediaAnalysisRequest.model_validate(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Invalid analysis payload: {exc}") from exc
+    return _with_receipt_url(_sign_media_analysis_core(req))
 
 
 @app.post("/v1/jcs-sha256")

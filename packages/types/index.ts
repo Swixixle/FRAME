@@ -12,7 +12,9 @@ export type SourceAdapterKind =
   | "propublica"
   | "lobbying"
   | "edgar"
-  | "manual";
+  | "manual"
+  | "congress"
+  | "wikidata";
 
 /** A verifiable document or API-backed citation. */
 export interface SourceRecord {

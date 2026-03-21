@@ -61,6 +61,19 @@ Every receipt is signed with **Ed25519** using **JCS (RFC 8785) canonicalization
 - Ed25519 + JCS canonicalization
 - Render environment for key storage (base64-encoded)
 
+## Environment variables (API / Render)
+
+| Variable | Purpose |
+|----------|---------|
+| `FRAME_PRIVATE_KEY` | Ed25519 PEM for signing receipts |
+| `FRAME_KEY_FORMAT` | `pem` or `base64` (Render often uses base64) |
+| `FEC_API_KEY` | OpenFEC (`DEMO_KEY` works with low limits) |
+| `ANTHROPIC_API_KEY` | Claude vision for media OCR / claim extraction |
+| `CONGRESS_API_KEY` | [api.congress.gov](https://api.congress.gov) — **required** for Congress bill search in Gap 3 routing (free signup) |
+| `HIVE_API_KEY` | Optional AI-generated image detection |
+
+**Gap 3:** `POST /v1/analyze-media` runs claim routing → public-record adapters → attaches `adapterResults` per claim. **`POST /v1/analyze-and-verify`** does the full pipeline and returns a signed receipt + `receiptUrl` in one request (used by the macOS capture script and browser extension).
+
 ---
 
 ## Status

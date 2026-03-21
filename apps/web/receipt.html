@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frame receipt</title>
+<style>
+  :root {
+    --bg: #0c0c0b;
+    --surface: #141412;
+    --border: #2a2a26;
+    --text: #f0ebe3;
+    --muted: #8a8578;
+    --dim: #5c584e;
+    --ok: #4caf7a;
+    --bad: #c75c5c;
+    --accent: #d4a84b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+    min-height: 100vh;
+    font-size: 15px;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 20px 18px 48px; }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 28px;
+  }
+  .wordmark {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .tag {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+  }
+  h1.claim {
+    font-size: clamp(1.35rem, 4.5vw, 1.85rem);
+    font-weight: 600;
+    line-height: 1.35;
+    margin-bottom: 24px;
+    letter-spacing: -0.02em;
+  }
+  .mono {
+    font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    word-break: break-all;
+  }
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 28px;
+  }
+  button {
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--accent);
+    cursor: pointer;
+    border-radius: 2px;
+  }
+  button:hover { border-color: var(--accent); color: var(--text); }
+  button.secondary { color: var(--muted); }
+  .section-title {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 12px;
+  }
+  .source-row {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 10px 14px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+    align-items: start;
+  }
+  .source-row:last-child { border-bottom: none; }
+  .badge {
+    font-size: 16px;
+    line-height: 1.4;
+    padding-top: 2px;
+  }
+  .badge.ok { color: var(--ok); }
+  .badge.bad { color: var(--bad); }
+  .badge.neutral { color: var(--dim); }
+  .src-title { font-weight: 600; margin-bottom: 6px; font-size: 14px; }
+  .src-url a { color: var(--accent); text-decoration: none; }
+  .src-url a:hover { text-decoration: underline; }
+  .src-meta { color: var(--muted); margin-top: 8px; font-size: 12px; }
+  .verified-block {
+    margin-top: 32px;
+    padding: 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .verified-block h2 {
+    font-family: ui-monospace, monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 14px;
+  }
+  .verified-block dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px 16px;
+    font-size: 13px;
+  }
+  .verified-block dt { color: var(--muted); }
+  .verified-block dd { color: var(--text); }
+  #verify-out {
+    margin-top: 14px;
+    padding: 12px;
+    background: #0a0a09;
+    border: 1px solid var(--border);
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    display: none;
+    color: var(--muted);
+  }
+  #verify-out.visible { display: block; }
+  #verify-out.ok { border-color: rgba(76, 175, 122, 0.4); color: var(--ok); }
+  #verify-out.err { border-color: rgba(199, 92, 92, 0.4); color: var(--bad); }
+  .err-banner {
+    padding: 16px;
+    background: rgba(199, 92, 92, 0.12);
+    border: 1px solid var(--bad);
+    color: var(--bad);
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  .err-banner.visible { display: block; }
+  .loading { color: var(--muted); font-size: 14px; padding: 24px 0; }
+  @media (max-width: 520px) {
+    .toolbar { flex-direction: column; align-items: stretch; }
+    button { width: 100%; text-align: center; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="wordmark">Frame</span>
+    <span class="tag">public record verification</span>
+  </header>
+
+  <div id="err-banner" class="err-banner"></div>
+  <div id="loading" class="loading">Loading receipt…</div>
+  <main id="main" style="display:none;">
+    <h1 class="claim" id="claim-text">—</h1>
+
+    <div class="toolbar">
+      <button type="button" id="btn-copy">Copy link</button>
+      <button type="button" id="btn-download" class="secondary">Download receipt JSON</button>
+      <button type="button" id="btn-verify">Verify this receipt</button>
+    </div>
+
+    <div class="section-title">Sources</div>
+    <div id="sources"></div>
+
+    <div class="verified-block">
+      <h2>Verified by Frame</h2>
+      <dl>
+        <dt>Receipt ID</dt>
+        <dd class="mono" id="vf-id">—</dd>
+        <dt>Signed</dt>
+        <dd id="vf-time">—</dd>
+        <dt>Public key</dt>
+        <dd class="mono" id="vf-pub">—</dd>
+      </dl>
+      <pre id="verify-out"></pre>
+    </div>
+  </main>
+</div>
+<script>
+(function () {
+  const API_BASE = (new URLSearchParams(location.search).get('api') || location.origin).replace(/\/$/, '');
+  const receiptId = location.pathname.split('/').filter(Boolean).pop() || '';
+
+  function $(id) { return document.getElementById(id); }
+
+  function unwrap(doc) {
+    if (doc && typeof doc === 'object' && doc.payload && typeof doc.payload === 'object') {
+      return { top: doc, inner: doc.payload };
+    }
+    return { top: doc, inner: doc };
+  }
+
+  function stripReceiptUrl(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    const copy = { ...obj };
+    delete copy.receiptUrl;
+    return copy;
+  }
+
+  function trunc(s, n) {
+    if (s == null || s === '') return '—';
+    const t = String(s);
+    return t.length <= n ? t : t.slice(0, n) + '…';
+  }
+
+  function sourceBadge(meta) {
+    if (!meta || typeof meta !== 'object') return { cls: 'ok', ch: '✓' };
+    const vs = meta.verificationStatus;
+    if (vs === 'verified') return { cls: 'ok', ch: '✓' };
+    if (vs === 'unverified') return { cls: 'bad', ch: '✗' };
+    return { cls: 'ok', ch: '✓' };
+  }
+
+  function contentHashForSource(meta) {
+    if (!meta || typeof meta !== 'object') return null;
+    return meta.contentHash || null;
+  }
+
+  function retrievedForSource(s, meta) {
+    if (meta && meta.retrievedAt) return meta.retrievedAt;
+    return s.retrievedAt || '—';
+  }
+
+  function render(doc) {
+    const { top, inner } = unwrap(doc);
+    const claim =
+      (inner.claims && inner.claims[0] && inner.claims[0].statement) ||
+      inner.subject?.claimText ||
+      inner.claimText ||
+      '—';
+    $('claim-text').textContent = claim;
+
+    const rid = inner.receiptId || top.receiptId || receiptId;
+    const created = inner.createdAt || top.createdAt || '—';
+    const pub = top.publicKey || inner.publicKey || '—';
+
+    $('vf-id').textContent = trunc(rid, 36);
+    $('vf-time').textContent = created;
+    $('vf-pub').textContent = trunc(pub, 44);
+
+    const box = $('sources');
+    box.innerHTML = '';
+    const sources = inner.sources || [];
+    if (sources.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'src-meta';
+      p.textContent = 'No source rows on this receipt.';
+      box.appendChild(p);
+    }
+    sources.forEach(function (s) {
+      const meta = s.metadata && typeof s.metadata === 'object' ? s.metadata : null;
+      const b = sourceBadge(meta);
+      const hash = contentHashForSource(meta);
+      const row = document.createElement('div');
+      row.className = 'source-row';
+      row.innerHTML =
+        '<div class="badge ' + b.cls + '">' + b.ch + '</div>' +
+        '<div>' +
+        '<div class="src-title">' + escapeHtml(s.title || 'Source') + '</div>' +
+        '<div class="src-url mono"><a href="' + escapeAttr(s.url) + '" target="_blank" rel="noopener">' +
+        escapeHtml(trunc(s.url, 80)) + '</a></div>' +
+        '<div class="src-meta mono">Hash: ' + escapeHtml(hash ? trunc(hash, 24) : '—') +
+        '</div><div class="src-meta">Retrieved: ' + escapeHtml(retrievedForSource(s, meta)) + '</div>' +
+        '</div>';
+      box.appendChild(row);
+    });
+
+    window.__frameReceiptDoc = doc;
+  }
+
+  function escapeHtml(t) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+  }
+  function escapeAttr(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }
+
+  $('btn-copy').onclick = function () {
+    const url = location.href.split('?')[0];
+    navigator.clipboard.writeText(url).then(
+      function () { alert('Link copied'); },
+      function () { prompt('Copy this URL:', url); }
+    );
+  };
+
+  $('btn-download').onclick = function () {
+    const doc = window.__frameReceiptDoc;
+    if (!doc) return;
+    const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'frame-receipt-' + receiptId + '.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  $('btn-verify').onclick = async function () {
+    const out = $('verify-out');
+    const doc = window.__frameReceiptDoc;
+    if (!doc) return;
+    out.className = 'visible';
+    out.textContent = 'Verifying…';
+    try {
+      const body = stripReceiptUrl(doc);
+      const r = await fetch(API_BASE + '/v1/verify-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        out.className = 'visible ok';
+        out.textContent = JSON.stringify(data, null, 2);
+      } else {
+        out.className = 'visible err';
+        out.textContent = JSON.stringify(data, null, 2);
+      }
+    } catch (e) {
+      out.className = 'visible err';
+      out.textContent = String(e.message || e);
+    }
+  };
+
+  fetch(API_BASE + '/v1/receipt/' + encodeURIComponent(receiptId))
+    .then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? 'Receipt not found.' : 'HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      $('loading').style.display = 'none';
+      $('main').style.display = 'block';
+      render(data);
+    })
+    .catch(function (e) {
+      $('loading').style.display = 'none';
+      const b = $('err-banner');
+      b.textContent = e.message || String(e);
+      b.classList.add('visible');
+    });
+})();
+</script>
+</body>
+</html>

@@ -21,15 +21,51 @@ type ClaimPrimarySource = {
   type?: string;
   verification?: VerificationMeta;
 };
+type AdapterResultRow = {
+  adapter?: string;
+  data?: Record<string, unknown> | null;
+  error?: string | null;
+};
+
 type ClaimObj = {
   text?: string;
   type?: string;
   entities?: string[];
   primary_sources?: ClaimPrimarySource[];
+  adapterResults?: AdapterResultRow[];
 };
 
 function claimSourceId(url: string): string {
   return `claim-src-${createHash("sha256").update(url).digest("hex").slice(0, 16)}`;
+}
+
+function adapterResultId(ar: AdapterResultRow): string {
+  const a = (ar.adapter || "manual").toLowerCase();
+  return `adapter-${a}-${createHash("sha256").update(JSON.stringify(ar)).digest("hex").slice(0, 16)}`;
+}
+
+function mapAdapterKind(name: string): FrameReceiptPayload["sources"][number]["adapter"] {
+  const n = (name || "").toLowerCase();
+  if (n === "fec") return "fec";
+  if (n === "irs990") return "propublica";
+  if (n === "lda") return "lobbying";
+  if (n === "congress") return "congress";
+  if (n === "wikidata") return "wikidata";
+  return "manual";
+}
+
+function adapterResultUrl(ar: AdapterResultRow): string {
+  const d = ar.data as Record<string, unknown> | undefined;
+  if (d && typeof d.sourceUrl === "string") return d.sourceUrl;
+  if (d && typeof d.searchUrl === "string") return d.searchUrl as string;
+  return `https://frame.invalid/adapter/${(ar.adapter || "unknown").replace(/\W/g, "-")}`;
+}
+
+function adapterResultTitle(ar: AdapterResultRow): string {
+  const d = ar.data as Record<string, unknown> | undefined;
+  if (d && typeof d.summary === "string") return d.summary;
+  if (ar.error) return `${ar.adapter || "adapter"} error: ${ar.error.slice(0, 120)}`;
+  return `${ar.adapter || "adapter"} — public record lookup`;
 }
 
 function buildMetadata(ps: ClaimPrimarySource, v: VerificationMeta | undefined): Record<string, string | number | boolean | null> {
@@ -200,6 +236,18 @@ for (const claim of claimsForNarrative.slice(0, 5)) {
   }
 }
 
+// Gap 3 — router-driven public record adapters (FEC, 990, LDA, Congress, Wikidata)
+for (const claim of claimsForNarrative.slice(0, 5)) {
+  const ars = (claim as ClaimObj).adapterResults ?? [];
+  for (const ar of ars.slice(0, 5)) {
+    const sid = adapterResultId(ar);
+    narrativeSentences.push({
+      text: `Public record (${ar.adapter ?? "adapter"}): ${adapterResultTitle(ar)}`,
+      sourceId: sid,
+    });
+  }
+}
+
 const firstClaimText =
   claimObjects.length > 0 && claimObjects[0].text
     ? claimObjects[0].text!.slice(0, 100)
@@ -225,6 +273,35 @@ for (const claim of claimObjects.slice(0, 5)) {
       retrievedAt:
         v?.verificationStatus === "verified" && v.retrievedAt ? v.retrievedAt : input.timestamp,
       externalRef: v?.requestedUrl ?? String(ps.url),
+      metadata: meta as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
+    });
+  }
+  for (const ar of ((claim as ClaimObj).adapterResults ?? []).slice(0, 5)) {
+    const sid = adapterResultId(ar);
+    const d = ar.data as Record<string, unknown> | null | undefined;
+    const dataErr = d && typeof d === "object" && d.error != null && d.error !== "";
+    const verified = !ar.error && ar.data != null && !dataErr;
+    const url = adapterResultUrl(ar);
+    const title = adapterResultTitle(ar);
+    const meta = {
+      verificationStatus: verified ? "verified" : "unverified",
+      suggestedBy: "router",
+      requestedUrl: url,
+      finalUrl: verified ? url : null,
+      httpStatus: verified ? 200 : null,
+      contentHash: null,
+      pageTitle: null,
+      retrievedAt: null,
+      reason: ar.error ?? null,
+      adapterData: JSON.stringify(ar.data ?? {}),
+    };
+    claimSources.push({
+      id: sid,
+      adapter: mapAdapterKind(ar.adapter ?? "manual"),
+      url,
+      title,
+      retrievedAt: input.timestamp,
+      externalRef: ar.adapter ?? "adapter",
       metadata: meta as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
     });
   }
