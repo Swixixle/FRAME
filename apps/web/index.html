@@ -128,6 +128,11 @@
   .footer-right a:hover{color:var(--amber);}
   @keyframes fadeUp{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);}}
   @keyframes fadeDown{from{opacity:0;transform:translateY(-8px);}to{opacity:1;transform:translateY(0);}}
+  .main-tabs{max-width:900px;margin:0 auto;padding:0 28px;display:flex;gap:0;border-bottom:1px solid var(--border);}
+  .main-tab{background:transparent;border:none;color:var(--text-3);font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;padding:14px 22px;cursor:pointer;border-bottom:2px solid transparent;transition:color .2s;}
+  .main-tab:hover{color:var(--text-2);}
+  .main-tab.active{color:var(--amber);border-bottom-color:var(--amber);}
+  .ts-badge{font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--amber-bright);letter-spacing:0.08em;margin-right:8px;}
   @media(max-width:600px){.type-selector{flex-direction:column;}.type-btn{border-right:1px solid var(--border)!important;}.sources-grid{grid-template-columns:1fr;}.evidence-item{grid-template-columns:36px 1fr;}}
 </style>
 </head>
@@ -146,6 +151,12 @@
     </div>
   </header>
 
+  <nav class="main-tabs">
+    <button type="button" class="main-tab active" id="tab-records" onclick="showMainPanel('records')">Public records</button>
+    <button type="button" class="main-tab" id="tab-podcast" onclick="showMainPanel('podcast')">Podcast / Video</button>
+  </nav>
+
+  <div id="panel-records">
   <section class="hero">
     <div class="hero-eyebrow">Public Record Infrastructure</div>
     <h1 class="hero-title">The public record,<br><em>signed and verified.</em></h1>
@@ -213,6 +224,21 @@
     </div>
   </section>
 
+  <section class="media-section" style="padding:48px 0;border-bottom:1px solid var(--border);">
+    <div class="section-label">Media Verification</div>
+    <p style="font-size:13px;color:var(--text-2);margin-top:8px;margin-bottom:24px;max-width:540px;line-height:1.7;">Upload any image or screenshot. Frame generates a cryptographic hash, a perceptual fingerprint that survives re-compression, extracts any text claims via OCR, and checks if this content has appeared before. The signed receipt proves when this file was first seen.</p>
+
+    <div id="drop-zone" style="border:1px dashed var(--border);padding:40px 24px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:var(--surface);" onclick="document.getElementById('media-file-input').click()" ondragover="event.preventDefault();this.style.borderColor='var(--amber-dim)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="handleDrop(event)">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--text-3);">Drop image here or click to upload</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);margin-top:8px;">PNG, JPG, GIF, WEBP — screenshots of social media, news, video frames</div>
+    </div>
+    <input type="file" id="media-file-input" accept="image/*" style="display:none" onchange="handleMediaFile(this.files[0])">
+
+    <div id="media-status" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-2);margin-top:12px;"></div>
+    <div id="media-result" style="display:none;margin-top:16px;"></div>
+  </section>
+  </div>
+
   <section class="receipt-output" id="receipt-output">
     <div class="section-label">Verified Receipt</div>
     <div class="receipt-claim" id="receipt-claim">—</div>
@@ -242,18 +268,23 @@
     </div>
   </section>
 
-  <section class="media-section" style="padding:48px 0;border-bottom:1px solid var(--border);">
-    <div class="section-label">Media Verification</div>
-    <p style="font-size:13px;color:var(--text-2);margin-top:8px;margin-bottom:24px;max-width:540px;line-height:1.7;">Upload any image or screenshot. Frame generates a cryptographic hash, a perceptual fingerprint that survives re-compression, extracts any text claims via OCR, and checks if this content has appeared before. The signed receipt proves when this file was first seen.</p>
-
-    <div id="drop-zone" style="border:1px dashed var(--border);padding:40px 24px;text-align:center;cursor:pointer;transition:border-color 0.2s;background:var(--surface);" onclick="document.getElementById('media-file-input').click()" ondragover="event.preventDefault();this.style.borderColor='var(--amber-dim)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="handleDrop(event)">
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--text-3);">Drop image here or click to upload</div>
-      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);margin-top:8px;">PNG, JPG, GIF, WEBP — screenshots of social media, news, video frames</div>
+  <section id="panel-podcast" class="hero" style="display:none;padding-top:32px;">
+    <div class="hero-eyebrow">Whisper · Claude · adapters</div>
+    <h2 class="hero-title" style="font-size:clamp(28px,4.5vw,48px);">Podcast &amp; video</h2>
+    <p class="hero-sub" style="max-width:640px;">YouTube, podcast RSS episode pages, or direct audio links. Local transcription (Whisper <code style="font-size:12px;color:var(--amber);">base</code>), claim extraction, then the same public-record routing as screenshots. <strong>v1: first 30 minutes only</strong> — longer audio is trimmed. First server run downloads ~140MB model weights.</p>
+    <div style="margin-bottom:14px;">
+      <div class="field-label">URL — YouTube, RSS episode, or direct mp3/m4a</div>
+      <input type="url" class="field-input" id="podcast-url" style="width:100%;max-width:640px;" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
     </div>
-    <input type="file" id="media-file-input" accept="image/*" style="display:none" onchange="handleMediaFile(this.files[0])">
-
-    <div id="media-status" style="display:none;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-2);margin-top:12px;"></div>
-    <div id="media-result" style="display:none;margin-top:16px;"></div>
+    <div id="podcast-drop-zone" style="border:1px dashed var(--border);padding:32px 20px;text-align:center;cursor:pointer;margin-bottom:16px;background:var(--surface);max-width:640px;" onclick="document.getElementById('podcast-file-input').click()" ondragover="event.preventDefault();this.style.borderColor='var(--amber-dim)'" ondragleave="this.style.borderColor='var(--border)'" ondrop="handlePodcastDrop(event)">
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--text-3);">Or drop audio / video file</div>
+      <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);margin-top:8px;">mp3, m4a, wav, webm</div>
+    </div>
+    <input type="file" id="podcast-file-input" accept="audio/*,video/*" style="display:none" onchange="document.getElementById('podcast-file-label').textContent=this.files[0]?this.files[0].name:''">
+    <div id="podcast-file-label" style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);margin-bottom:12px;"></div>
+    <button type="button" class="search-btn" id="podcast-submit-btn" onclick="runPodcastVerify()">Transcribe &amp; Verify →</button>
+    <div id="podcast-stage" style="display:none;margin-top:16px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--amber);letter-spacing:0.1em;"></div>
+    <div id="podcast-result" style="display:none;margin-top:20px;"></div>
   </section>
 
   <section class="sample-section">
@@ -281,7 +312,98 @@
 </div>
 <script>
 const API_BASE=(new URLSearchParams(location.search).get('api')||'https://frame-2yxu.onrender.com').replace(/\/$/,'');
-function stripReceiptUrl(obj){if(!obj||typeof obj!=='object')return obj;const{receiptUrl,extractedClaimObjects,...rest}=obj;return rest;}
+function stripReceiptUrl(obj){if(!obj||typeof obj!=='object')return obj;const{receiptUrl,extractedClaimObjects,transcript,sourceUrl,podcastTitle,note,...rest}=obj;return rest;}
+function showMainPanel(which){
+  const rec=document.getElementById('panel-records');
+  const pod=document.getElementById('panel-podcast');
+  if(which==='records'){rec.style.display='block';pod.style.display='none';}
+  else{rec.style.display='none';pod.style.display='block';}
+  document.getElementById('tab-records').classList.toggle('active',which==='records');
+  document.getElementById('tab-podcast').classList.toggle('active',which==='podcast');
+}
+function formatTs(sec){
+  const s=Math.max(0,Math.floor(Number(sec)||0));
+  const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),ss=s%60;
+  return [h,m,ss].map(n=>String(n).padStart(2,'0')).join(':');
+}
+function handlePodcastDrop(e){
+  e.preventDefault();
+  document.getElementById('podcast-drop-zone').style.borderColor='var(--border)';
+  const f=e.dataTransfer.files[0];
+  if(f){
+    const input=document.getElementById('podcast-file-input');
+    try{const dt=new DataTransfer();dt.items.add(f);input.files=dt.files;}catch(_){}
+    document.getElementById('podcast-file-label').textContent=f.name;
+  }
+}
+async function runPodcastVerify(){
+  const url=document.getElementById('podcast-url').value.trim();
+  const file=document.getElementById('podcast-file-input').files[0];
+  const stage=document.getElementById('podcast-stage');
+  const result=document.getElementById('podcast-result');
+  const btn=document.getElementById('podcast-submit-btn');
+  if(!url&&!file){alert('Enter a URL or choose an audio file.');return;}
+  btn.disabled=true;
+  result.style.display='none';
+  stage.style.display='block';
+  const stages=['Downloading audio…','Transcribing…','Extracting claims…'];
+  let si=0;
+  stage.textContent=stages[0];
+  const iv=setInterval(function(){si=(si+1)%3;stage.textContent=stages[si];},2800);
+  try{
+    let r;
+    if(file){
+      const fd=new FormData();
+      fd.append('file',file);
+      r=await fetch(`${API_BASE}/v1/analyze-and-verify-podcast`,{method:'POST',body:fd});
+    }else{
+      r=await fetch(`${API_BASE}/v1/analyze-and-verify-podcast`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url})});
+    }
+    if(!r.ok){
+      const t=await r.text().catch(function(){return '';});
+      throw new Error(`HTTP ${r.status} ${t.slice(0,400)}`);
+    }
+    const signed=await r.json();
+    clearInterval(iv);
+    stage.style.display='none';
+    result.style.display='block';
+    result.innerHTML=buildPodcastResult(signed);
+    renderReceipt(signed);
+    document.getElementById('manual-payload').value=JSON.stringify(signed,null,2);
+    document.getElementById('receipt-output').scrollIntoView({behavior:'smooth',block:'start'});
+    autoVerify(stripReceiptUrl(signed));
+  }catch(err){
+    clearInterval(iv);
+    stage.style.display='none';
+    result.style.display='block';
+    result.innerHTML='<div style="padding:16px;background:rgba(122,58,58,0.1);border:1px solid var(--red);color:var(--red-bright);font-family:\'IBM Plex Mono\',monospace;font-size:11px;">'+escHtml(err.message)+'</div>';
+  }
+  btn.disabled=false;
+}
+function buildPodcastResult(signed){
+  const data=mediaAnalysisFromSigned(signed);
+  const claims=signed.extractedClaimObjects||[];
+  const tr=signed.transcript||{};
+  const segs=(tr.segments||[]).length;
+  const claimsHtml=claims.length>0?('<div style="margin-top:16px;"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px;">Extracted claims</div>'+claims.map(function(c){
+    const ts=typeof c.timestamp_start==='number'?'<span class="ts-badge">['+formatTs(c.timestamp_start)+']</span>':'';
+    const srcLinks=(c.primary_sources||[]).map(function(s){
+      const v=s.verification;
+      const verified=v&&v.verificationStatus==='verified';
+      const unverified=v&&v.verificationStatus==='unverified';
+      const statusText=v?(verified?'✓ '+v.httpStatus:unverified?'✗ '+(v.reason||'unverified'):''):'';
+      const color=verified?'var(--amber)':unverified?'var(--red-bright)':'var(--text-3)';
+      return '<div style="margin-top:6px;"><a href="'+escHtml(s.url)+'" target="_blank" rel="noopener" style="font-family:\'IBM Plex Mono\',monospace;font-size:8px;letter-spacing:0.1em;color:'+color+';text-decoration:none;text-transform:uppercase;">→ '+escHtml(s.label||'')+'</a> <span style="font-size:8px;color:var(--text-3);">'+escHtml(statusText)+'</span></div>';
+    }).join('');
+    return '<div style="padding:12px 0;border-bottom:1px solid var(--border-light);">'+ts+'<div style="font-family:\'Cormorant Garamond\',serif;font-size:17px;font-style:italic;color:var(--text);margin-bottom:6px;">"'+escHtml(c.text||'')+'"</div><div style="font-family:\'IBM Plex Mono\',monospace;font-size:8px;color:var(--text-3);margin-bottom:4px;letter-spacing:0.15em;text-transform:uppercase;">'+(c.type||'general')+(c.speaker?' · '+escHtml(c.speaker):'')+(c.entities&&c.entities.length?' · '+c.entities.map(escHtml).join(', '):'')+'</div><div style="display:flex;flex-wrap:wrap;">'+srcLinks+'</div></div>';
+  }).join('')+'</div>'):'';
+  const entityLinks=collectEntityLinks(signed);
+  const entityBlock=entityLinks&&entityLinks.length?('<div style="margin-top:14px;padding:14px 16px;border:1px solid var(--border);background:var(--surface-2);"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:8px;letter-spacing:0.25em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;">Entity behavioral ledger</div><div style="display:flex;flex-wrap:wrap;gap:8px 16px;">'+entityLinks.map(function(e){return '<a href="'+API_BASE+'/entity/'+encodeURIComponent(e.slug)+'" target="_blank" rel="noopener" style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:var(--amber-bright);text-decoration:none;">View entity record → '+escHtml(e.name)+'</a>';}).join('')+'</div></div>'):'';
+  const mediaShare=shareUrlFor(signed);
+  const rid=signed.receiptId||'';
+  const sharePanel=mediaShare?('<div style="margin-top:16px;padding:16px;background:var(--surface-2);border:1px solid var(--amber-dim);border-radius:2px;"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:8px;letter-spacing:0.25em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;">Shareable receipt</div><a href='+JSON.stringify(mediaShare)+' target="_blank" rel="noopener" style="display:block;font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--amber-bright);word-break:break-all;">'+escHtml(mediaShare)+'</a><div style="margin-top:12px;"><button type="button" class="btn" onclick="navigator.clipboard.writeText('+JSON.stringify(mediaShare)+')">Copy link</button></div></div>'):'';
+  return '<div style="background:var(--surface);border:1px solid var(--border);padding:24px;"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--text-3);margin-bottom:16px;">Podcast / video receipt</div><div style="font-family:\'IBM Plex Mono\',monospace;font-size:10px;color:var(--text-2);line-height:2;"><div>Acoustic fingerprint: <span style="color:var(--amber);word-break:break-all;">'+escHtml(data.fileHash)+'</span></div><div>Transcript: <span style="color:var(--text);">'+segs+' segments</span> · Whisper base</div><div>Source: '+escHtml((signed.sourceUrl||data.sourceUrl||data.fileName||'—').toString().slice(0,160))+'</div></div>'+claimsHtml+entityBlock+'<div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-light);"><div style="font-family:\'IBM Plex Mono\',monospace;font-size:9px;color:var(--green-bright);">✓ Signed · SHA-256: '+(signed.contentHash?escHtml(signed.contentHash.slice(0,16)):'—')+'...</div></div>'+sharePanel+'</div>';
+}
 function entitySlug(name){return String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');}
 function collectEntityLinks(signed){
   const list=signed.extractedClaimObjects;

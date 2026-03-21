@@ -24,13 +24,22 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from adapters_media import dispatch_adapter
+from adapters_podcast import (
+    PODCAST_MAX_SECONDS,
+    acoustic_fingerprint,
+    download_audio,
+    extract_speaker_claims,
+    save_uploaded_audio,
+    transcribe_audio,
+    trim_audio_max,
+)
 from router import route_claim
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -1020,6 +1029,132 @@ async def _build_analyze_media_response(
     }
 
 
+def _format_podcast_ts(seconds: float) -> str:
+    s = int(max(0.0, float(seconds)))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+async def _build_podcast_analysis_response(
+    *,
+    url: str | None,
+    upload_bytes: bytes | None,
+    upload_filename: str | None,
+) -> dict[str, Any]:
+    """
+    Download or save audio, trim to PODCAST_MAX_SECONDS, Whisper transcribe, Claude claims,
+    verify sources + adapter routing — same shape as analyze-media (+ transcript, podcast fields).
+    """
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    claim_extract_error: str | None = None
+
+    if url and url.strip():
+        try:
+            dl = await asyncio.to_thread(download_audio, url.strip())
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"Download failed: {exc}") from exc
+        audio_path = dl["path"]
+        title = str(dl.get("title") or "podcast")[:500]
+        source_url = str(dl.get("source_url") or url)
+    elif upload_bytes is not None:
+        dl = save_uploaded_audio(upload_bytes, upload_filename or "upload.mp3")
+        audio_path = dl["path"]
+        title = str(dl.get("title") or "upload")[:500]
+        source_url = "upload://local"
+    else:
+        raise HTTPException(status_code=400, detail="Provide JSON {\"url\": \"...\"} or multipart file field \"file\".")
+
+    trimmed_path, was_trimmed = trim_audio_max(audio_path, PODCAST_MAX_SECONDS)
+    file_size = Path(trimmed_path).stat().st_size
+
+    fp = await asyncio.to_thread(acoustic_fingerprint, trimmed_path)
+    transcript = await asyncio.to_thread(transcribe_audio, trimmed_path)
+
+    try:
+        raw_claims = await asyncio.to_thread(extract_speaker_claims, transcript, title)
+    except Exception as exc:  # noqa: BLE001
+        raw_claims = []
+        claim_extract_error = str(exc)[:300]
+
+    extracted_claim_objects: list[dict[str, Any]] = [dict(c) for c in raw_claims]
+    extracted_claims = [str(c.get("text") or "") for c in extracted_claim_objects if c.get("text")]
+
+    # Verify primary sources (same as analyze-media)
+    verified_claim_objects: list[dict[str, Any]] = []
+    for claim_obj in extracted_claim_objects:
+        if not isinstance(claim_obj, dict):
+            verified_claim_objects.append(claim_obj)
+            continue
+        verified_sources: list[Any] = []
+        for ps in claim_obj.get("primary_sources", [])[:3]:
+            if not isinstance(ps, dict):
+                verified_sources.append(ps)
+                continue
+            purl = ps.get("url", "")
+            if purl and str(purl).startswith("http"):
+                snapshot = await _verify_and_snapshot_source(str(purl))
+                snapshot["suggestedBy"] = "claude"
+                verified_sources.append({**ps, "verification": snapshot})
+            else:
+                verified_sources.append(ps)
+        verified_claim_objects.append({**claim_obj, "primary_sources": verified_sources})
+    extracted_claim_objects = verified_claim_objects
+
+    # Route to public-record adapters
+    for claim_obj in extracted_claim_objects:
+        if not isinstance(claim_obj, dict):
+            continue
+        specs = route_claim(claim_obj)
+        results: list[dict[str, Any]] = []
+        for spec in specs:
+            adapter = str(spec.get("adapter") or "")
+            try:
+                data = await asyncio.to_thread(
+                    dispatch_adapter,
+                    adapter,
+                    spec.get("params") or {},
+                )
+                results.append({"adapter": adapter, "data": data, "error": None})
+            except Exception as e:  # noqa: BLE001
+                results.append({"adapter": adapter, "data": None, "error": str(e)[:500]})
+        claim_obj["adapterResults"] = results
+
+    note_parts = [
+        "v1: First "
+        + str(PODCAST_MAX_SECONDS // 60)
+        + " minutes only — longer audio is truncated. Spotify app links unsupported; use RSS or YouTube.",
+    ]
+    if was_trimmed:
+        note_parts.append("This file was trimmed to the cap.")
+    if claim_extract_error:
+        note_parts.append(f"Claim extraction issue: {claim_extract_error}")
+    note = " ".join(note_parts)
+
+    return {
+        "fileHash": fp,
+        "perceptualHash": None,
+        "perceptualHashType": None,
+        "fileName": title[:240],
+        "fileSize": file_size,
+        "contentType": "audio/mpeg",
+        "timestamp": timestamp,
+        "extractedText": transcript.get("full_text"),
+        "extractedClaims": extracted_claims,
+        "extractedClaimObjects": extracted_claim_objects,
+        "detection": {
+            "detector": "whisper",
+            "note": "Local openai-whisper (base). First run downloads ~140MB model weights; cold start can be slow on free tier.",
+            "model": os.environ.get("FRAME_WHISPER_MODEL", "base"),
+        },
+        "ledgerMatch": None,
+        "sourceType": "podcast",
+        "sourceUrl": source_url,
+        "podcastTitle": title,
+        "transcript": transcript,
+        "note": note,
+    }
+
+
 @app.post("/v1/analyze-media")
 async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
     contents = await file.read()
@@ -1044,6 +1179,11 @@ class MediaAnalysisRequest(BaseModel):
     extractedClaimObjects: list[dict[str, Any]] = Field(default_factory=list)
     ledgerMatch: dict[str, Any] | None = None
     claimText: str | None = None
+    # Podcast / video (sign-media-analysis.ts + entity ledger)
+    sourceType: str | None = None
+    sourceUrl: str | None = None
+    podcastTitle: str | None = None
+    transcript: dict[str, Any] | None = None
 
 
 def _index_entity_receipts(signed_payload: dict[str, Any], req: MediaAnalysisRequest) -> None:
@@ -1061,6 +1201,12 @@ def _index_entity_receipts(signed_payload: dict[str, Any], req: MediaAnalysisReq
         if not isinstance(claim, dict):
             continue
         claim_text = str(claim.get("text") or "").strip() or "(no text)"
+        ts = claim.get("timestamp_start")
+        if ts is not None:
+            try:
+                claim_text = f"{claim_text} [at {_format_podcast_ts(float(ts))}]"
+            except (TypeError, ValueError):
+                pass
         claim_type = str(claim.get("type") or "general").strip() or "general"
         entities = claim.get("entities") or []
         ars = claim.get("adapterResults") or []
@@ -1132,7 +1278,7 @@ def _sign_media_analysis_core(req: MediaAnalysisRequest) -> dict[str, Any]:
         check=False,
         cwd=str(root),
         env={**os.environ},
-        timeout=120,
+        timeout=600,
     )
 
     if proc.returncode != 0:
@@ -1171,6 +1317,68 @@ async def analyze_and_verify(file: UploadFile = File(...)) -> dict[str, Any]:
     out = _finalize_media_sign(req, signed_core)
     # Echo OCR claim objects for demo UI (not part of signed receipt; verify ignores extra keys)
     return {**out, "extractedClaimObjects": body.get("extractedClaimObjects", [])}
+
+
+@app.post("/v1/analyze-podcast")
+async def analyze_podcast(request: Request) -> dict[str, Any]:
+    """Transcribe + extract claims from YouTube, podcast RSS, or uploaded audio (30 min cap)."""
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ct:
+        form = await request.form()
+        f = form.get("file")
+        if f is None or not hasattr(f, "read"):
+            raise HTTPException(status_code=400, detail='Expected multipart field "file"')
+        data = await f.read()
+        name = getattr(f, "filename", None) or "upload.mp3"
+        return await _build_podcast_analysis_response(url=None, upload_bytes=data, upload_filename=name)
+    try:
+        body = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Expected JSON body {\"url\": \"...\"}") from exc
+    url = (body or {}).get("url")
+    if not url or not isinstance(url, str):
+        raise HTTPException(status_code=400, detail='JSON body must include {"url": "https://..."}')
+    return await _build_podcast_analysis_response(url=url.strip(), upload_bytes=None, upload_filename=None)
+
+
+@app.post("/v1/analyze-and-verify-podcast")
+async def analyze_and_verify_podcast(request: Request) -> dict[str, Any]:
+    """Podcast pipeline → sign receipt → receiptUrl → entity index."""
+    ct = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" in ct:
+        form = await request.form()
+        f = form.get("file")
+        if f is None or not hasattr(f, "read"):
+            raise HTTPException(status_code=400, detail='Expected multipart field "file"')
+        data = await f.read()
+        name = getattr(f, "filename", None) or "upload.mp3"
+        body = await _build_podcast_analysis_response(url=None, upload_bytes=data, upload_filename=name)
+    else:
+        try:
+            jb = await request.json()
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="Expected JSON body {\"url\": \"...\"}") from exc
+        url = (jb or {}).get("url")
+        if not url or not isinstance(url, str):
+            raise HTTPException(status_code=400, detail='JSON body must include {"url": "https://..."}')
+        body = await _build_podcast_analysis_response(url=url.strip(), upload_bytes=None, upload_filename=None)
+
+    allowed = set(MediaAnalysisRequest.model_fields.keys())
+    payload = {k: v for k, v in body.items() if k in allowed}
+    try:
+        req = MediaAnalysisRequest.model_validate(payload)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Invalid analysis payload: {exc}") from exc
+    signed_core = _sign_media_analysis_core(req)
+    out = _finalize_media_sign(req, signed_core)
+    return {
+        **out,
+        "extractedClaimObjects": body.get("extractedClaimObjects", []),
+        "transcript": body.get("transcript"),
+        "sourceUrl": body.get("sourceUrl"),
+        "podcastTitle": body.get("podcastTitle"),
+        "note": body.get("note"),
+    }
 
 
 @app.post("/v1/jcs-sha256")

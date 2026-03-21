@@ -33,6 +33,9 @@ type ClaimObj = {
   entities?: string[];
   primary_sources?: ClaimPrimarySource[];
   adapterResults?: AdapterResultRow[];
+  timestamp_start?: number;
+  timestamp_end?: number;
+  speaker?: string;
 };
 
 function claimSourceId(url: string): string {
@@ -123,6 +126,14 @@ const input = JSON.parse(
   extractedClaimObjects?: ClaimObj[];
   ledgerMatch?: Record<string, unknown> | null;
   claimText?: string | null;
+  sourceType?: string | null;
+  sourceUrl?: string | null;
+  podcastTitle?: string | null;
+  transcript?: {
+    segments?: Array<{ start?: number; end?: number; text?: string }>;
+    full_text?: string;
+    duration?: number;
+  } | null;
 };
 
 function getPrivateKeyPem(): string {
@@ -138,6 +149,14 @@ function getPrivateKeyPem(): string {
 
 const privateKey = createPrivateKey(getPrivateKeyPem());
 
+function formatTs(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return [h, m, ss].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
 const aiScore = input.detection?.ai_generated_score;
 const detectorName = input.detection?.detector ?? "unknown";
 const hasDetection = aiScore != null && typeof aiScore === "number";
@@ -148,58 +167,77 @@ const extractedText: string = input.extractedText ?? "";
 const ledgerMatch = input.ledgerMatch ?? null;
 
 const sourceId = `media-${(input.fileHash as string).slice(0, 16)}`;
+const isPodcast = input.sourceType === "podcast";
 
 const narrativeSentences: Array<{ text: string; sourceId: string }> = [];
 
-// Sentence 1 — cryptographic identity
-narrativeSentences.push({
-  text: `At ${input.timestamp}, media file "${input.fileName}" (${input.contentType}, ${input.fileSize} bytes) was received and cryptographically hashed. SHA-256: ${input.fileHash}.`,
-  sourceId,
-});
-
-// Sentence 2 — perceptual fingerprint
-if (perceptualHash) {
+if (isPodcast) {
+  const src = input.sourceUrl ?? "upload";
+  const segCount = input.transcript?.segments?.length ?? 0;
+  const dur = Math.round(input.transcript?.duration ?? 0);
   narrativeSentences.push({
-    text: `Perceptual fingerprint (pHash-DCT-64bit): ${perceptualHash}. This fingerprint remains stable across re-compression, watermarking, and minor cropping, enabling identification of near-duplicate copies across platforms.`,
+    text: `Podcast/video analysis at ${input.timestamp}: "${input.podcastTitle || input.fileName}" (${input.contentType}, ${input.fileSize} bytes). Acoustic fingerprint SHA-256: ${input.fileHash}. Source: ${src}.`,
     sourceId,
   });
-}
-
-// Sentence 3 — prior appearance / ledger match
-if (ledgerMatch) {
-  const msg = String(ledgerMatch.message ?? "");
-  const mt = String(ledgerMatch.matchType ?? "");
-  const hd = ledgerMatch.hammingDistance;
   narrativeSentences.push({
-    text: `Ledger check: ${msg} Match type: ${mt}${hd != null ? ` (Hamming distance: ${String(hd)}/64)` : ""}.`,
+    text: `Whisper (base) transcription: ${segCount} segments, duration ${dur}s. Perceptual image hash and image AI-detection do not apply to audio.`,
+    sourceId,
+  });
+  narrativeSentences.push({
+    text: `Ledger: Perceptual-hash viral ledger is image-only; this receipt is anchored to the acoustic fingerprint and transcript below.`,
     sourceId,
   });
 } else {
+  // Sentence 1 — cryptographic identity
   narrativeSentences.push({
-    text: `Ledger check: No prior record of this content found at time of signing. This receipt establishes the first-seen timestamp.`,
+    text: `At ${input.timestamp}, media file "${input.fileName}" (${input.contentType}, ${input.fileSize} bytes) was received and cryptographically hashed. SHA-256: ${input.fileHash}.`,
     sourceId,
   });
-}
 
-// Sentence 4 — AI detection
-if (hasDetection) {
-  narrativeSentences.push({
-    text: `AI-generated content detection (${detectorName}): ${((aiScore as number) * 100).toFixed(1)}% probability of AI generation.`,
-    sourceId,
-  });
-} else {
-  narrativeSentences.push({
-    text: `AI-generated content detection: No detector configured at time of signing. Set HIVE_API_KEY in environment to enable.`,
-    sourceId,
-  });
-}
+  // Sentence 2 — perceptual fingerprint
+  if (perceptualHash) {
+    narrativeSentences.push({
+      text: `Perceptual fingerprint (pHash-DCT-64bit): ${perceptualHash}. This fingerprint remains stable across re-compression, watermarking, and minor cropping, enabling identification of near-duplicate copies across platforms.`,
+      sourceId,
+    });
+  }
 
-// Sentence 5 — extracted text
-if (extractedText && extractedText.length > 0 && !extractedText.startsWith("OCR unavailable")) {
-  narrativeSentences.push({
-    text: `OCR text extraction: "${extractedText.slice(0, 500)}${extractedText.length > 500 ? "..." : ""}"`,
-    sourceId,
-  });
+  // Sentence 3 — prior appearance / ledger match
+  if (ledgerMatch) {
+    const msg = String(ledgerMatch.message ?? "");
+    const mt = String(ledgerMatch.matchType ?? "");
+    const hd = ledgerMatch.hammingDistance;
+    narrativeSentences.push({
+      text: `Ledger check: ${msg} Match type: ${mt}${hd != null ? ` (Hamming distance: ${String(hd)}/64)` : ""}.`,
+      sourceId,
+    });
+  } else {
+    narrativeSentences.push({
+      text: `Ledger check: No prior record of this content found at time of signing. This receipt establishes the first-seen timestamp.`,
+      sourceId,
+    });
+  }
+
+  // Sentence 4 — AI detection
+  if (hasDetection) {
+    narrativeSentences.push({
+      text: `AI-generated content detection (${detectorName}): ${((aiScore as number) * 100).toFixed(1)}% probability of AI generation.`,
+      sourceId,
+    });
+  } else {
+    narrativeSentences.push({
+      text: `AI-generated content detection: No detector configured at time of signing. Set HIVE_API_KEY in environment to enable.`,
+      sourceId,
+    });
+  }
+
+  // Sentence 5 — extracted text
+  if (extractedText && extractedText.length > 0 && !extractedText.startsWith("OCR unavailable")) {
+    narrativeSentences.push({
+      text: `OCR text extraction: "${extractedText.slice(0, 500)}${extractedText.length > 500 ? "..." : ""}"`,
+      sourceId,
+    });
+  }
 }
 
 const claimsForNarrative =
@@ -212,13 +250,25 @@ const claimsForNarrative =
         primary_sources: [] as ClaimPrimarySource[],
       }));
 
-// One sentence per claim (extracted text only) — cites media source only
+// One sentence per claim — podcast uses timestamp + speaker attribution
 for (const claim of claimsForNarrative.slice(0, 5)) {
+  const c = claim as ClaimObj;
   const claimText = typeof claim === "string" ? claim : (claim.text ?? "");
-  narrativeSentences.push({
-    text: `Extracted claim (${(claim as ClaimObj).type ?? "general"}): "${claimText}"`,
-    sourceId,
-  });
+  if (isPodcast) {
+    const ts =
+      typeof c.timestamp_start === "number" ? formatTs(c.timestamp_start) : "??:??:??";
+    const sp = (c.speaker || "speaker").replace(/"/g, "'");
+    const ent = (c.entities || []).join(", ");
+    narrativeSentences.push({
+      text: `At ${ts}, ${sp} said: "${(c.text ?? "").slice(0, 400)}" [${c.type ?? "general"} · ${ent}]`,
+      sourceId,
+    });
+  } else {
+    narrativeSentences.push({
+      text: `Extracted claim (${(claim as ClaimObj).type ?? "general"}): "${claimText}"`,
+      sourceId,
+    });
+  }
 }
 
 // Verified primary sources only — each cite its own source row id
@@ -253,8 +303,12 @@ const firstClaimText =
     ? claimObjects[0].text!.slice(0, 100)
     : extractedClaims[0]?.slice(0, 100) ?? "";
 const claimStatement = firstClaimText
-  ? `Media analysis: "${firstClaimText}" — file ${(input.fileHash as string).slice(0, 16)}...`
-  : `Media file integrity receipt — SHA-256: ${(input.fileHash as string).slice(0, 16)}...`;
+  ? isPodcast
+    ? `Podcast/video: "${firstClaimText}" — acoustic ${(input.fileHash as string).slice(0, 16)}...`
+    : `Media analysis: "${firstClaimText}" — file ${(input.fileHash as string).slice(0, 16)}...`
+  : isPodcast
+    ? `Podcast/video transcript receipt — acoustic SHA-256: ${(input.fileHash as string).slice(0, 16)}...`
+    : `Media file integrity receipt — SHA-256: ${(input.fileHash as string).slice(0, 16)}...`;
 
 const claimSources: FrameReceiptPayload["sources"] = [];
 for (const claim of claimObjects.slice(0, 5)) {
@@ -307,6 +361,52 @@ for (const claim of claimObjects.slice(0, 5)) {
   }
 }
 
+const transcriptRowId = `transcript-${createHash("sha256").update(`${input.fileHash}:transcript`).digest("hex").slice(0, 16)}`;
+const transcriptSource: FrameReceiptPayload["sources"][number] | null = isPodcast
+  ? {
+      id: transcriptRowId,
+      adapter: "manual",
+      url: `whisper://local/${input.fileHash}`,
+      title: `Whisper transcript: ${input.podcastTitle || input.fileName}`,
+      retrievedAt: input.timestamp,
+      externalRef: (input.sourceUrl ?? "upload") as string,
+      metadata: {
+        model: "whisper-base",
+        duration: input.transcript?.duration ?? 0,
+        segmentCount: input.transcript?.segments?.length ?? 0,
+        sourceUrl: input.sourceUrl,
+        sourceType: "podcast",
+      } as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
+    }
+  : null;
+
+const mainMetadata = (
+  isPodcast
+    ? {
+        sourceType: "podcast",
+        fileHash: input.fileHash,
+        fileName: input.fileName,
+        fileSize: input.fileSize,
+        contentType: input.contentType,
+        sourceUrl: input.sourceUrl,
+        podcastTitle: input.podcastTitle,
+        detection: input.detection,
+        transcriptSegmentCount: input.transcript?.segments?.length ?? 0,
+        extractedClaimsCount: extractedClaims.length,
+      }
+    : {
+        fileHash: input.fileHash,
+        perceptualHash: perceptualHash,
+        perceptualHashType: input.perceptualHashType,
+        fileName: input.fileName,
+        fileSize: input.fileSize,
+        contentType: input.contentType,
+        detection: input.detection,
+        ledgerMatch: ledgerMatch,
+        extractedClaimsCount: extractedClaims.length,
+      }
+) as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>;
+
 const payload: FrameReceiptPayload = {
   schemaVersion: "1.0.0",
   receiptId: randomUUID(),
@@ -323,21 +423,14 @@ const payload: FrameReceiptPayload = {
       id: sourceId,
       adapter: "manual",
       url: `sha256:${input.fileHash}`,
-      title: `Media file: ${input.fileName} (${input.contentType})`,
+      title: isPodcast
+        ? `Podcast/video: ${input.podcastTitle || input.fileName} (${input.contentType})`
+        : `Media file: ${input.fileName} (${input.contentType})`,
       retrievedAt: input.timestamp,
       externalRef: input.fileHash as string,
-      metadata: {
-        fileHash: input.fileHash,
-        perceptualHash: perceptualHash,
-        perceptualHashType: input.perceptualHashType,
-        fileName: input.fileName,
-        fileSize: input.fileSize,
-        contentType: input.contentType,
-        detection: input.detection,
-        ledgerMatch: ledgerMatch,
-        extractedClaimsCount: extractedClaims.length,
-      } as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
+      metadata: mainMetadata,
     },
+    ...(transcriptSource ? [transcriptSource] : []),
     ...claimSources,
   ],
   narrative: narrativeSentences,
