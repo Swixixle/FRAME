@@ -1,6 +1,14 @@
 import type { FrameReceiptPayload } from "@frame/types";
-import { createPrivateKey, randomUUID } from "node:crypto";
+import { createHash, createPrivateKey, randomUUID } from "node:crypto";
 import { signReceipt } from "../packages/signing/index.js";
+
+type ClaimPrimarySource = { label?: string; url?: string; type?: string };
+type ClaimObj = {
+  text?: string;
+  type?: string;
+  entities?: string[];
+  primary_sources?: ClaimPrimarySource[];
+};
 
 const input = JSON.parse(
   await new Promise<string>((resolve) => {
@@ -27,6 +35,7 @@ const input = JSON.parse(
   perceptualHashType?: string | null;
   extractedText?: string | null;
   extractedClaims?: string[];
+  extractedClaimObjects?: ClaimObj[];
   ledgerMatch?: Record<string, unknown> | null;
   claimText?: string | null;
 };
@@ -49,6 +58,7 @@ const detectorName = input.detection?.detector ?? "unknown";
 const hasDetection = aiScore != null && typeof aiScore === "number";
 const perceptualHash = input.perceptualHash ?? null;
 const extractedClaims: string[] = input.extractedClaims ?? [];
+const claimObjects: ClaimObj[] = input.extractedClaimObjects ?? [];
 const extractedText: string = input.extractedText ?? "";
 const ledgerMatch = input.ledgerMatch ?? null;
 
@@ -107,18 +117,58 @@ if (extractedText && extractedText.length > 0 && !extractedText.startsWith("OCR 
   });
 }
 
-// Sentences 6+ — extracted claims
-for (const claim of extractedClaims.slice(0, 5)) {
+// Sentences 6+ — extracted claims (with classification and primary sources)
+const claimsForNarrative =
+  claimObjects.length > 0
+    ? claimObjects
+    : extractedClaims.map((t) => ({
+        text: t,
+        type: "general",
+        entities: [] as string[],
+        primary_sources: [] as ClaimPrimarySource[],
+      }));
+
+for (const claim of claimsForNarrative.slice(0, 5)) {
+  const claimText = typeof claim === "string" ? claim : (claim.text ?? "");
+  const sources = (claim as ClaimObj).primary_sources ?? [];
+  const sourceList = sources
+    .map((s) => `${s.label}: ${s.url}`)
+    .filter(Boolean)
+    .join(" | ");
   narrativeSentences.push({
-    text: `Extracted claim: "${claim}"`,
+    text: `Extracted claim (${(claim as ClaimObj).type ?? "general"}): "${claimText}"${sourceList ? ` — Primary sources: ${sourceList}` : ""}`,
     sourceId,
   });
 }
 
-const claimStatement =
-  extractedClaims.length > 0
-    ? `Media analysis: "${extractedClaims[0].slice(0, 100)}" — file ${(input.fileHash as string).slice(0, 16)}...`
-    : `Media file integrity receipt — SHA-256: ${(input.fileHash as string).slice(0, 16)}...`;
+const firstClaimText =
+  claimObjects.length > 0 && claimObjects[0].text
+    ? claimObjects[0].text!.slice(0, 100)
+    : extractedClaims[0]?.slice(0, 100) ?? "";
+const claimStatement = firstClaimText
+  ? `Media analysis: "${firstClaimText}" — file ${(input.fileHash as string).slice(0, 16)}...`
+  : `Media file integrity receipt — SHA-256: ${(input.fileHash as string).slice(0, 16)}...`;
+
+// Primary sources from extracted claims (adapter "manual"; suggested type in metadata)
+const claimSources: FrameReceiptPayload["sources"] = [];
+for (const claim of claimObjects.slice(0, 5)) {
+  for (const ps of (claim.primary_sources ?? []).slice(0, 3)) {
+    if (ps.url && ps.label) {
+      const id = `claim-src-${createHash("sha256").update(ps.url).digest("hex").slice(0, 16)}`;
+      claimSources.push({
+        id,
+        adapter: "manual",
+        url: ps.url,
+        title: ps.label,
+        retrievedAt: input.timestamp,
+        externalRef: ps.url,
+        metadata: {
+          suggestedSourceType: ps.type ?? "",
+        } as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
+      });
+    }
+  }
+}
 
 const payload: FrameReceiptPayload = {
   schemaVersion: "1.0.0",
@@ -151,6 +201,7 @@ const payload: FrameReceiptPayload = {
         extractedClaimsCount: extractedClaims.length,
       } as unknown as NonNullable<FrameReceiptPayload["sources"][number]["metadata"]>,
     },
+    ...claimSources,
   ],
   narrative: narrativeSentences,
   contentHash: "",

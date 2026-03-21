@@ -444,9 +444,10 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
         perceptual_hash = None
         perceptual_hash_type = f"unavailable: {str(e)[:80]}"
 
-    # Step 3 — OCR via Claude vision (extract any text claims from the image)
+    # Step 3 — OCR via Claude vision (extract text, claims, classification, and primary sources)
     extracted_text: str | None = None
     extracted_claims: list[str] = []
+    extracted_claim_objects: list[dict[str, Any]] = []
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if anthropic_key and content_type.startswith("image/"):
         try:
@@ -463,7 +464,7 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
             ant_media_type = media_type_map.get(content_type, "image/jpeg")
             msg = client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=500,
+                max_tokens=1200,
                 messages=[
                     {
                         "role": "user",
@@ -479,10 +480,34 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
                             {
                                 "type": "text",
                                 "text": (
-                                    'Extract all visible text from this image. Then identify any specific factual '
-                                    'claims being made (things that could be true or false). Return JSON only in '
-                                    'this format: {"extracted_text": "all visible text here", "claims": ["claim 1", '
-                                    '"claim 2"]}. If no text is visible, return {"extracted_text": "", "claims": []}.'
+                                    "Analyze this image and return JSON only — no markdown, no explanation.\n\n"
+                                    "Return this exact structure:\n"
+                                    "{\n"
+                                    '  "extracted_text": "all visible text verbatim",\n'
+                                    '  "claims": [\n'
+                                    "    {\n"
+                                    '      "text": "the specific claim",\n'
+                                    '      "type": "one of: government_action | financial | death_toll | election | legal | scientific | corporate | general",\n'
+                                    '      "entities": ["named people, orgs, or programs mentioned"],\n'
+                                    '      "primary_sources": [\n'
+                                    "        {\n"
+                                    '          "label": "short source name",\n'
+                                    '          "url": "direct URL to the most authoritative primary source for this claim",\n'
+                                    '          "type": "one of: government | database | legislation | nonprofit | news | academic"\n'
+                                    "        }\n"
+                                    "      ]\n"
+                                    "    }\n"
+                                    "  ]\n"
+                                    "}\n\n"
+                                    "For primary_sources, use real URLs to actual public records:\n"
+                                    "- Government actions/foreign aid: state.gov, usaid.gov, congress.gov, gao.gov\n"
+                                    "- Financial/donations: fec.gov, opensecrets.org, sec.gov\n"
+                                    "- Death tolls/health: who.int, cdc.gov, reliefweb.int, acleddata.com\n"
+                                    "- Legislation: congress.gov/bill/\n"
+                                    "- Nonprofits: projects.propublica.org/nonprofits\n"
+                                    "- Corporate: sec.gov/cgi-bin/browse-edgar\n"
+                                    "Provide 1-3 primary sources per claim. Use real, specific URLs when possible.\n"
+                                    'If no text is visible return {"extracted_text": "", "claims": []}.'
                                 ),
                             },
                         ],
@@ -499,10 +524,23 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
                         ocr_raw = ocr_raw[4:]
             ocr_data = json.loads(ocr_raw)
             extracted_text = ocr_data.get("extracted_text", "")
-            extracted_claims = ocr_data.get("claims", [])
+            raw_claims = ocr_data.get("claims", [])
+            # Support both old format (list of strings) and new format (list of objects)
+            extracted_claims = []
+            extracted_claim_objects = []
+            for c in raw_claims:
+                if isinstance(c, str):
+                    extracted_claims.append(c)
+                    extracted_claim_objects.append(
+                        {"text": c, "type": "general", "entities": [], "primary_sources": []},
+                    )
+                elif isinstance(c, dict):
+                    extracted_claims.append(str(c.get("text", "")))
+                    extracted_claim_objects.append(c)
         except Exception as e:  # noqa: BLE001
             extracted_text = f"OCR unavailable: {str(e)[:120]}"
             extracted_claims = []
+            extracted_claim_objects = []
 
     # Step 4 — check perceptual hash ledger for prior appearances
     ledger_match: dict[str, Any] | None = None
@@ -558,6 +596,7 @@ async def analyze_media(file: UploadFile = File(...)) -> dict[str, Any]:
         "timestamp": timestamp,
         "extractedText": extracted_text,
         "extractedClaims": extracted_claims,
+        "extractedClaimObjects": extracted_claim_objects,
         "detection": detection_result,
         "ledgerMatch": ledger_match,
         "note": "Submit to /v1/sign-media-analysis to get a signed Frame receipt",
@@ -575,6 +614,7 @@ class MediaAnalysisRequest(BaseModel):
     timestamp: str
     extractedText: str | None = None
     extractedClaims: list[str] = Field(default_factory=list)
+    extractedClaimObjects: list[dict[str, Any]] = Field(default_factory=list)
     ledgerMatch: dict[str, Any] | None = None
     claimText: str | None = None
 
