@@ -81,9 +81,14 @@ Distribution layer (future):
 - POST /v1/verify-receipt: COMPLETE and working on Render
 - POST /v1/generate-receipt: COMPLETE locally, PEM key format issue on Render in progress
 - Demo UI with evidence chain, source links, rabbit hole: COMPLETE on Netlify
-- POST /v1/analyze-media: COMPLETE — SHA-256 file hashing, Hive AI detection (requires HIVE_API_KEY)
-- POST /v1/sign-media-analysis: COMPLETE — signs media analysis result as Frame receipt
-- Combined media pipeline: hash → detect → sign → verify
+- POST /v1/analyze-media: COMPLETE — SHA-256 + perceptual hash (pHash-DCT-64bit), Claude vision OCR, claim classification with type/entities, primary source URL suggestion, source verification and content snapshotting (SHA-256 of page at retrieval time), Hive AI detection (requires HIVE_API_KEY)
+- POST /v1/sign-media-analysis: COMPLETE — signs full media analysis as Frame receipt including verified source hashes
+- GET /v1/ledger: COMPLETE — SQLite-backed perceptual hash ledger, exact + Hamming distance matching, first-seen timestamps
+- Media upload UI: COMPLETE — drag and drop on /demo, shows claim type, entities, source verification status, content hash, page title
+- Persistent ledger: SQLite at /tmp/frame_ledger.db (resets on redeploy until Render Pro + PostgreSQL)
+- Known gap: source URLs are Claude suggestions — some return 404/403. Need URL resolver that only signs verified sources.
+- Known gap: ledger resets on redeploy. Fix: Render Pro PostgreSQL (swap DATABASE_URL, same code)
+- Combined media pipeline: hash → detect → verify sources → ledger → sign → verify
 
 ## Immediate Next Task
 Fix FRAME_PRIVATE_KEY format on Render so /v1/generate-receipt works in production.
