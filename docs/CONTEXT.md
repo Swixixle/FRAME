@@ -95,6 +95,7 @@ Distribution layer (future):
 - Known gap: ledger resets on redeploy. Fix: Render Pro PostgreSQL (swap DATABASE_URL, same code)
 - Combined media pipeline: hash → detect → verify sources → ledger → sign → verify
 - **Gap 3 (OCR → router → adapters):** `apps/api/router.py` + `adapters_media.py` — after Claude extracts claims, `route_claim()` selects fec / irs990 (ProPublica) / lda / congress / wikidata; results on each claim as `adapterResults`; `sign-media-analysis.ts` adds adapter rows to `sources[]` with `metadata.adapterData`. **`POST /v1/analyze-and-verify`** = analyze + route + sign in one call. **`CONGRESS_API_KEY`** required for Congress.gov bill search (free at api.congress.gov).
+- **Gap 4 (entity behavioral ledger):** SQLite table `entity_receipts` — each verified media receipt appends rows per (claim × entity) from `extractedClaimObjects`. **`GET /v1/entity/{name}`**, **`GET /v1/entity/{name}/summary`**, **`GET /v1/entities`**. **`GET /entity/{name}`** serves `apps/web/entity.html` (Cinzel baroque frame). Demo UI links “View entity record →” after analyze-and-verify when entities are present.
 
 ## Immediate Next Task
 Fix FRAME_PRIVATE_KEY format on Render so /v1/generate-receipt works in production.

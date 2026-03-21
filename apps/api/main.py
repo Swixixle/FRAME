@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import threading
@@ -407,6 +408,30 @@ def _init_db() -> None:
             """
         )
         conn.commit()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS entity_receipts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entity_name TEXT NOT NULL,
+                entity_normalized TEXT NOT NULL,
+                claim_type TEXT NOT NULL,
+                claim_text TEXT NOT NULL,
+                receipt_id TEXT NOT NULL,
+                receipt_url TEXT,
+                signed_at TEXT NOT NULL,
+                adapter_names TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.commit()
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity ON entity_receipts(entity_normalized)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_claim_type ON entity_receipts(entity_normalized, claim_type)"
+        )
+        conn.commit()
         conn.close()
 
 
@@ -443,6 +468,20 @@ def _with_receipt_url(data: dict[str, Any]) -> dict[str, Any]:
         return data
     base = _frame_public_base_url()
     return {**data, "receiptUrl": f"{base}/receipt/{rid}"}
+
+
+def _normalize_entity_name(name: str) -> str:
+    """Lowercase, strip punctuation; collapse whitespace (e.g. 'Lindsey Graham' -> 'lindsey graham')."""
+    s = re.sub(r"[^\w\s]", " ", (name or "").lower())
+    return " ".join(s.split())
+
+
+def _path_param_to_normalized(name: str) -> str:
+    """Accept URL path like lindsey-graham or Lindsey%20Graham."""
+    raw = urllib.parse.unquote(name or "")
+    if "-" in raw and " " not in raw:
+        raw = raw.replace("-", " ")
+    return _normalize_entity_name(raw)
 
 
 def _verification_reason_from_http(code: int) -> str:
@@ -620,6 +659,133 @@ def receipt_share_page(receipt_id: str) -> HTMLResponse:
     path = _repo_root() / "apps" / "web" / "receipt.html"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="receipt page template missing")
+    return HTMLResponse(
+        content=path.read_text(encoding="utf-8"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+def _entity_ledger_payload(normalized: str, *, limit: int | None = None) -> dict[str, Any]:
+    """Build JSON for GET /v1/entity/{name} and summary (optional row limit for receipts)."""
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            total = conn.execute(
+                "SELECT COUNT(*) FROM entity_receipts WHERE entity_normalized = ?",
+                (normalized,),
+            ).fetchone()
+            n = int(total[0]) if total else 0
+            if n == 0:
+                raise HTTPException(status_code=404, detail="Entity not found")
+            display_row = conn.execute(
+                "SELECT entity_name FROM entity_receipts WHERE entity_normalized = ? ORDER BY id DESC LIMIT 1",
+                (normalized,),
+            ).fetchone()
+            display = display_row["entity_name"] if display_row else normalized.title()
+            type_rows = conn.execute(
+                "SELECT claim_type, COUNT(*) AS c FROM entity_receipts WHERE entity_normalized = ? GROUP BY claim_type",
+                (normalized,),
+            ).fetchall()
+            claim_types = {str(r["claim_type"]): int(r["c"]) for r in type_rows}
+            q = (
+                "SELECT receipt_id, receipt_url, claim_text, claim_type, signed_at, adapter_names "
+                "FROM entity_receipts WHERE entity_normalized = ? ORDER BY id DESC"
+            )
+            params: tuple[Any, ...] = (normalized,)
+            if limit is not None:
+                q += " LIMIT ?"
+                params = (normalized, int(limit))
+            rows = conn.execute(q, params).fetchall()
+        finally:
+            conn.close()
+
+    receipts: list[dict[str, Any]] = []
+    for r in rows:
+        raw_adapters = r["adapter_names"]
+        adapters = (
+            [a.strip() for a in str(raw_adapters).split(",") if a.strip()]
+            if raw_adapters
+            else []
+        )
+        receipts.append(
+            {
+                "receiptId": r["receipt_id"],
+                "receiptUrl": r["receipt_url"],
+                "claimText": r["claim_text"],
+                "claimType": r["claim_type"],
+                "signedAt": r["signed_at"],
+                "adapters": adapters,
+            }
+        )
+    return {
+        "entity": display,
+        "normalized": normalized,
+        "receiptCount": n,
+        "claimTypes": claim_types,
+        "receipts": receipts,
+    }
+
+
+@app.get("/v1/entity/{name}/summary")
+def get_entity_summary(name: str) -> dict[str, Any]:
+    """Behavioral ledger for an entity — counts + most recent 3 receipts only."""
+    normalized = _path_param_to_normalized(name)
+    return _entity_ledger_payload(normalized, limit=3)
+
+
+@app.get("/v1/entity/{name}")
+def get_entity_ledger(name: str) -> dict[str, Any]:
+    """Full behavioral ledger for a normalized entity name."""
+    normalized = _path_param_to_normalized(name)
+    return _entity_ledger_payload(normalized, limit=None)
+
+
+@app.get("/v1/entities")
+def list_entities() -> dict[str, Any]:
+    """All entities Frame has indexed, by receipt count descending."""
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            rows = conn.execute(
+                """
+                SELECT
+                  x.entity_normalized,
+                  (
+                    SELECT entity_name FROM entity_receipts er
+                    WHERE er.entity_normalized = x.entity_normalized
+                    ORDER BY er.id DESC LIMIT 1
+                  ) AS entity_name,
+                  x.cnt AS receipt_count
+                FROM (
+                  SELECT entity_normalized, COUNT(*) AS cnt
+                  FROM entity_receipts
+                  GROUP BY entity_normalized
+                ) AS x
+                ORDER BY x.cnt DESC
+                """
+            ).fetchall()
+        finally:
+            conn.close()
+    return {
+        "entities": [
+            {
+                "entity": r["entity_name"] or r["entity_normalized"].title(),
+                "normalized": r["entity_normalized"],
+                "receiptCount": int(r["receipt_count"]),
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.get("/entity/{name}", response_class=HTMLResponse)
+def entity_share_page(name: str) -> HTMLResponse:
+    """Standalone entity ledger page (baroque frame; loads JSON from GET /v1/entity/{name})."""
+    path = _repo_root() / "apps" / "web" / "entity.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="entity page template missing")
     return HTMLResponse(
         content=path.read_text(encoding="utf-8"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
@@ -880,6 +1046,78 @@ class MediaAnalysisRequest(BaseModel):
     claimText: str | None = None
 
 
+def _index_entity_receipts(signed_payload: dict[str, Any], req: MediaAnalysisRequest) -> None:
+    """Append rows to entity_receipts for each (claim, entity). Never raises."""
+    rid = signed_payload.get("receiptId")
+    if not rid:
+        return
+    receipt_url = signed_payload.get("receiptUrl")
+    signed_at = str(signed_payload.get("createdAt") or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
+    claims = req.extractedClaimObjects or []
+    if not claims:
+        return
+    rows: list[tuple[Any, ...]] = []
+    for claim in claims:
+        if not isinstance(claim, dict):
+            continue
+        claim_text = str(claim.get("text") or "").strip() or "(no text)"
+        claim_type = str(claim.get("type") or "general").strip() or "general"
+        entities = claim.get("entities") or []
+        ars = claim.get("adapterResults") or []
+        adapters: set[str] = set()
+        for ar in ars:
+            if isinstance(ar, dict) and ar.get("adapter"):
+                adapters.add(str(ar["adapter"]).strip())
+        adapter_names = ",".join(sorted(adapters)) if adapters else None
+        if not entities:
+            continue
+        for ent in entities:
+            entity_name = str(ent).strip()
+            if not entity_name:
+                continue
+            en = _normalize_entity_name(entity_name)
+            if not en:
+                continue
+            rows.append(
+                (
+                    entity_name,
+                    en,
+                    claim_type,
+                    claim_text,
+                    str(rid),
+                    receipt_url,
+                    signed_at,
+                    adapter_names,
+                )
+            )
+    if not rows:
+        return
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        try:
+            conn.executemany(
+                """
+                INSERT INTO entity_receipts (
+                    entity_name, entity_normalized, claim_type, claim_text,
+                    receipt_id, receipt_url, signed_at, adapter_names
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def _finalize_media_sign(req: MediaAnalysisRequest, signed_core: dict[str, Any]) -> dict[str, Any]:
+    out = _with_receipt_url(signed_core)
+    try:
+        _index_entity_receipts(out, req)
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _sign_media_analysis_core(req: MediaAnalysisRequest) -> dict[str, Any]:
     root = _repo_root()
     script = root / "scripts" / "sign-media-analysis.ts"
@@ -911,7 +1149,7 @@ def _sign_media_analysis_core(req: MediaAnalysisRequest) -> dict[str, Any]:
 
 @app.post("/v1/sign-media-analysis")
 def sign_media_analysis(req: MediaAnalysisRequest) -> dict[str, Any]:
-    return _with_receipt_url(_sign_media_analysis_core(req))
+    return _finalize_media_sign(req, _sign_media_analysis_core(req))
 
 
 @app.post("/v1/analyze-and-verify")
@@ -929,7 +1167,10 @@ async def analyze_and_verify(file: UploadFile = File(...)) -> dict[str, Any]:
         req = MediaAnalysisRequest.model_validate(payload)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Invalid analysis payload: {exc}") from exc
-    return _with_receipt_url(_sign_media_analysis_core(req))
+    signed_core = _sign_media_analysis_core(req)
+    out = _finalize_media_sign(req, signed_core)
+    # Echo OCR claim objects for demo UI (not part of signed receipt; verify ignores extra keys)
+    return {**out, "extractedClaimObjects": body.get("extractedClaimObjects", [])}
 
 
 @app.post("/v1/jcs-sha256")

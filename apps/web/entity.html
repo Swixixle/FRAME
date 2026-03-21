@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frame — Entity record</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=Crimson+Pro:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #070706;
+    --surface: #0e0d0a;
+    --gold: #c9a227;
+    --gold-dim: #6b5a1e;
+    --gold-glow: rgba(201, 162, 39, 0.12);
+    --text: #ebe4d4;
+    --muted: #7a7263;
+    --line: #2a2418;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Crimson Pro", Georgia, serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 17px;
+    line-height: 1.55;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 50% at 50% -20%, var(--gold-glow), transparent 55%),
+      url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; max-width: 760px; margin: 0 auto; padding: 36px 20px 64px; }
+  .frame {
+    border: 2px solid var(--gold-dim);
+    outline: 1px solid rgba(201, 162, 39, 0.35);
+    outline-offset: 6px;
+    background: linear-gradient(165deg, var(--surface) 0%, #080705 100%);
+    padding: 36px 32px 40px;
+    box-shadow:
+      inset 0 0 80px rgba(0,0,0,0.5),
+      0 24px 48px rgba(0,0,0,0.45);
+  }
+  @media (max-width: 520px) {
+    .frame { padding: 24px 18px 32px; outline-offset: 4px; }
+  }
+  .ornament {
+    text-align: center;
+    font-family: Cinzel, serif;
+    font-size: 11px;
+    letter-spacing: 0.55em;
+    color: var(--gold-dim);
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+  h1 {
+    font-family: Cinzel, serif;
+    font-weight: 600;
+    font-size: clamp(1.75rem, 5vw, 2.35rem);
+    letter-spacing: 0.06em;
+    color: var(--gold);
+    text-align: center;
+    line-height: 1.2;
+    margin-bottom: 8px;
+    text-shadow: 0 0 40px rgba(201, 162, 39, 0.15);
+  }
+  .sub {
+    text-align: center;
+    font-family: Cinzel, serif;
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    margin-bottom: 28px;
+  }
+  .stats {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px 14px;
+    margin-bottom: 28px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .pill {
+    font-family: Cinzel, serif;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    padding: 8px 14px;
+    border: 1px solid var(--gold-dim);
+    color: var(--text);
+    background: rgba(201, 162, 39, 0.06);
+  }
+  .pill strong { color: var(--gold); font-weight: 600; }
+  .section-h {
+    font-family: Cinzel, serif;
+    font-size: 10px;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+  .timeline { border-top: 1px solid var(--line); }
+  .row {
+    display: grid;
+    grid-template-columns: 100px 1fr auto;
+    gap: 12px 16px;
+    padding: 18px 0;
+    border-bottom: 1px solid var(--line);
+    align-items: start;
+  }
+  @media (max-width: 600px) {
+    .row { grid-template-columns: 1fr; gap: 8px; }
+  }
+  .row-date {
+    font-family: Cinzel, serif;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  .row-claim {
+    font-style: italic;
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  .row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .type-badge {
+    font-family: Cinzel, serif;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    color: var(--gold);
+  }
+  .row a {
+    font-family: Cinzel, serif;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    color: var(--gold);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .row a:hover { text-decoration: underline; }
+  .loading, .err {
+    font-family: Cinzel, serif;
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+  }
+  .err { color: #a65c5c; }
+  .footer-note {
+    margin-top: 32px;
+    text-align: center;
+    font-family: Cinzel, serif;
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="frame">
+    <div class="ornament">◇ Frame ◇</div>
+    <div id="loading" class="loading">Loading entity record…</div>
+    <div id="err" class="err" style="display:none;"></div>
+    <div id="main" style="display:none;">
+      <h1 id="entity-title">—</h1>
+      <p class="sub" id="entity-sub">Behavioral ledger</p>
+      <div class="stats" id="pills"></div>
+      <div class="section-h">Timeline</div>
+      <div class="timeline" id="timeline"></div>
+      <p class="footer-note">Append-only · anchored receipts</p>
+    </div>
+  </div>
+</div>
+<script>
+(function () {
+  const API_BASE = (new URLSearchParams(location.search).get('api') || location.origin).replace(/\/$/, '');
+  const parts = location.pathname.split('/').filter(Boolean);
+  const nameParam = parts[parts.length - 1] || '';
+
+  function esc(t) {
+    const d = document.createElement('div');
+    d.textContent = t;
+    return d.innerHTML;
+  }
+  function formatDate(iso) {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch (e) { return iso; }
+  }
+  function trunc(s, n) {
+    const t = String(s || '');
+    return t.length <= n ? t : t.slice(0, n) + '…';
+  }
+
+  fetch(API_BASE + '/v1/entity/' + encodeURIComponent(nameParam))
+    .then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? 'No ledger entries for this entity yet.' : 'HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('main').style.display = 'block';
+      document.getElementById('entity-title').textContent = data.entity || '—';
+      document.getElementById('entity-sub').textContent =
+        (data.receiptCount || 0) + ' receipt' + ((data.receiptCount || 0) === 1 ? '' : 's') +
+        ' · ' + (data.normalized || '');
+
+      const pills = document.getElementById('pills');
+      pills.innerHTML = '';
+      const ct = data.claimTypes || {};
+      Object.keys(ct).sort().forEach(function (k) {
+        const span = document.createElement('span');
+        span.className = 'pill';
+        span.innerHTML = '<strong>' + esc(k) + '</strong> (' + esc(String(ct[k])) + ')';
+        pills.appendChild(span);
+      });
+
+      const tl = document.getElementById('timeline');
+      tl.innerHTML = '';
+      (data.receipts || []).forEach(function (rec) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const link = rec.receiptUrl
+          ? '<a href="' + esc(rec.receiptUrl) + '" target="_blank" rel="noopener">View receipt →</a>'
+          : '';
+        row.innerHTML =
+          '<div class="row-date">' + esc(formatDate(rec.signedAt)) + '</div>' +
+          '<div><div class="row-claim">' + esc(trunc(rec.claimText, 220)) + '</div></div>' +
+          '<div class="row-meta"><span class="type-badge">' + esc(rec.claimType || '—') + '</span>' + link + '</div>';
+        tl.appendChild(row);
+      });
+    })
+    .catch(function (e) {
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('err').style.display = 'block';
+      document.getElementById('err').textContent = String(e.message || e);
+    });
+})();
+</script>
+</body>
+</html>

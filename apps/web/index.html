@@ -281,8 +281,82 @@
 </div>
 <script>
 const API_BASE=(new URLSearchParams(location.search).get('api')||'https://frame-2yxu.onrender.com').replace(/\/$/,'');
-function stripReceiptUrl(obj){if(!obj||typeof obj!=='object')return obj;const{receiptUrl,...rest}=obj;return rest;}
-function shareUrlFor(signed){if(signed.receiptUrl)return signed.receiptUrl;const rid=signed.receiptId||(signed.payload&&signed.payload.receiptId);return rid?`${API_BASE}/receipt/${rid}`:null;}
+function stripReceiptUrl(obj){if(!obj||typeof obj!=='object')return obj;const{receiptUrl,extractedClaimObjects,...rest}=obj;return rest;}
+function entitySlug(name){return String(name).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');}
+function collectEntityLinks(signed){
+  const list=signed.extractedClaimObjects;
+  if(!Array.isArray(list)||!list.length)return null;
+  const seen=new Set();
+  const out=[];
+  for(const c of list){
+    const ents=c.entities;
+    if(!Array.isArray(ents))continue;
+    for(const e of ents){
+      const s=String(e).trim();
+      if(!s)continue;
+      const slug=entitySlug(s);
+      if(seen.has(slug))continue;
+      seen.add(slug);
+      out.push({name:s,slug});
+    }
+  }
+  return out.length?out:null;
+}
+function escHtml(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function shareUrlFor(signed){
+  if(!signed||typeof signed!=='object')return null;
+  if(signed.receiptUrl)return signed.receiptUrl;
+  const rid=signed.receiptId||(signed.payload&&signed.payload.receiptId);
+  return rid?`${API_BASE}/receipt/${rid}`:null;
+}
+/** Reconstruct analyze-style fields from a signed media receipt (output of /v1/analyze-and-verify). */
+function mediaAnalysisFromSigned(signed){
+  const sources=signed.sources||[];
+  const media=sources.find(s=>String(s.id||'').startsWith('media-'))||sources.find(s=>String(s.url||'').startsWith('sha256:'));
+  const meta=(media&&media.metadata)||{};
+  const fileHash=meta.fileHash||(media&&String(media.url||'').replace(/^sha256:/,''))||'';
+  return{
+    fileHash,
+    perceptualHash:meta.perceptualHash??null,
+    perceptualHashType:meta.perceptualHashType??null,
+    fileName:meta.fileName||'upload',
+    fileSize:Number(meta.fileSize)||0,
+    contentType:meta.contentType||'image/*',
+    timestamp:signed.createdAt,
+    detection:meta.detection,
+    ledgerMatch:meta.ledgerMatch,
+    extractedText:extractOcrFromNarrative(signed),
+    extractedClaimObjects:extractClaimsFromNarrative(signed),
+    extractedClaims:[]
+  };
+}
+function extractOcrFromNarrative(signed){
+  const nar=signed.narrative||[];
+  for(let i=0;i<nar.length;i++){
+    const t=(nar[i].text!=null)?String(nar[i].text):'';
+    const marker='OCR text extraction:';
+    const ix=t.indexOf(marker);
+    if(ix>=0){
+      let rest=t.slice(ix+marker.length).trim();
+      if(rest.charAt(0)==='"')rest=rest.slice(1);
+      const q=rest.indexOf('"');
+      return q>=0?rest.slice(0,q):rest.slice(0,500);
+    }
+  }
+  return'';
+}
+function extractClaimsFromNarrative(signed){
+  const out=[];
+  const nar=signed.narrative||[];
+  for(let i=0;i<nar.length;i++){
+    const t=(nar[i].text!=null)?String(nar[i].text):'';
+    const m=t.match(/^Extracted claim \(([^)]+)\): "([^"]*)"/);
+    if(m)out.push({type:m[1],text:m[2],primary_sources:[]});
+  }
+  return out;
+}
 let currentType='fec';
 const TYPE_DESCS={fec:'FEC candidate ID or name search. Returns campaign finance totals by election cycle.','990':'Nonprofit name or EIN. Returns IRS 990 financial data — assets, revenue, expenses.',wikidata:'Any public figure, journalist, executive, or religious leader. Returns biography and affiliations.',combined:'Senator + FEC ID + lobbying clients. Returns cross-referenced campaign finance and lobbying data.'};
 function setType(type,btn){
@@ -458,40 +532,36 @@ async function handleMediaFile(file) {
   const result = document.getElementById('media-result');
   status.style.display = 'block';
   result.style.display = 'none';
-  status.textContent = 'Hashing and analyzing...';
+  status.textContent = 'Analyzing, routing, signing…';
 
   const formData = new FormData();
   document.getElementById('media-file-input').value = '';
   formData.append('file', file);
 
   try {
-    const r = await fetch(`${API_BASE}/v1/analyze-media`, {
+    const r = await fetch(`${API_BASE}/v1/analyze-and-verify`, {
       method: 'POST',
       body: formData,
     });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    status.textContent = 'Analysis complete — signing receipt...';
-
-    // Auto-sign
-    const signR = await fetch(`${API_BASE}/v1/sign-media-analysis`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!signR.ok) throw new Error(`Sign HTTP ${signR.status}`);
-    const signed = await signR.json();
+    if (!r.ok) {
+      const errBody = await r.text().catch(() => '');
+      throw new Error(`HTTP ${r.status} ${errBody.slice(0, 200)}`);
+    }
+    const signed = await r.json();
 
     status.style.display = 'none';
     result.style.display = 'block';
-    result.innerHTML = buildMediaResult(data, signed);
-
+    result.innerHTML = buildMediaResult(signed);
+    renderReceipt(signed);
+    document.getElementById('manual-payload').value = JSON.stringify(signed, null, 2);
+    autoVerify(stripReceiptUrl(signed));
   } catch (err) {
     status.textContent = `Error: ${err.message}`;
   }
 }
 
-function buildMediaResult(data, signed) {
+function buildMediaResult(signed) {
+  const data = mediaAnalysisFromSigned(signed);
   const ledger = data.ledgerMatch;
   const ledgerHtml = ledger
     ? `<div style="margin-top:12px;padding:12px 16px;background:rgba(176,72,72,0.08);border:1px solid var(--red);border-left:3px solid var(--red-bright);font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--red-bright);line-height:1.8;">⚠ ${ledger.message}</div>`
@@ -527,15 +597,33 @@ function buildMediaResult(data, signed) {
     ? `<div style="margin-top:12px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);padding:10px 12px;background:var(--surface);border-left:2px solid var(--amber-dim);">EXTRACTED TEXT: ${data.extractedText.slice(0,300)}${data.extractedText.length>300?'...':''}</div>`
     : '';
 
-  const mediaShare=shareUrlFor(signed);
-  const shareBtn=mediaShare?`<div style="margin-top:14px;"><button type="button" class="btn" onclick="window.open(${JSON.stringify(mediaShare)},'_blank','noopener')">Share this receipt</button></div>`:'';
+  const entityLinks = collectEntityLinks(signed);
+  const entityBlock = entityLinks && entityLinks.length
+    ? `<div style="margin-top:14px;padding:14px 16px;border:1px solid var(--border);background:var(--surface-2);">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:0.25em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;">Entity behavioral ledger</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px 16px;">${entityLinks.map(e=>`<a href="${API_BASE}/entity/${encodeURIComponent(e.slug)}" target="_blank" rel="noopener" style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--amber-bright);text-decoration:none;letter-spacing:0.06em;">View entity record → ${escHtml(e.name)}</a>`).join('')}</div>
+      </div>`
+    : '';
+  const mediaShare = shareUrlFor(signed);
+  const rid = signed.receiptId || '';
+  const sharePanel = mediaShare
+    ? `<div style="margin-top:16px;padding:16px;background:var(--surface-2);border:1px solid var(--amber-dim);border-radius:2px;">
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:8px;letter-spacing:0.25em;text-transform:uppercase;color:var(--text-3);margin-bottom:10px;">Shareable receipt</div>
+        <a href=${JSON.stringify(mediaShare)} target="_blank" rel="noopener" style="display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--amber-bright);word-break:break-all;line-height:1.5;text-decoration:underline;">${escHtml(mediaShare)}</a>
+        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+          <button type="button" class="btn" onclick="navigator.clipboard.writeText(${JSON.stringify(mediaShare)}).then(function(){alert('Link copied to clipboard');}).catch(function(){prompt('Copy this URL:',${JSON.stringify(mediaShare)});})">Copy link</button>
+          <button type="button" class="btn" onclick="window.open(${JSON.stringify(mediaShare)},'_blank','noopener')">Open receipt page</button>
+        </div>
+        ${rid ? `<div style="margin-top:10px;font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--text-3);">Receipt ID: <span style="color:var(--text-2);">${escHtml(rid)}</span></div>` : ''}
+      </div>`
+    : `<div style="margin-top:14px;padding:12px;background:var(--surface);border:1px solid var(--border);font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-3);">No share URL — missing receiptId in response. Try redeploying the API or check /v1/analyze-and-verify.</div>`;
   return `
     <div style="background:var(--surface);border:1px solid var(--border);padding:24px;">
       <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--text-3);margin-bottom:16px;">Media Analysis Receipt</div>
       <div style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--text-2);line-height:2;">
         <div>SHA-256: <span style="color:var(--amber);word-break:break-all;">${data.fileHash}</span></div>
         <div>Perceptual Hash: <span style="color:var(--text);">${data.perceptualHash ?? 'unavailable'}</span></div>
-        <div>File: ${data.fileName} · ${(data.fileSize/1024).toFixed(1)}KB · ${data.contentType}</div>
+        <div>File: ${data.fileName} · ${(Math.max(data.fileSize,1)/1024).toFixed(1)}KB · ${data.contentType}</div>
         <div>Timestamp: ${data.timestamp}</div>
         ${data.detection?.ai_generated_score != null ? `<div>AI Detection: <span style="color:var(--amber-bright);">${(data.detection.ai_generated_score*100).toFixed(1)}% AI-generated probability</span></div>` : ''}
       </div>
@@ -545,7 +633,8 @@ function buildMediaResult(data, signed) {
       <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-light);">
         <div style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:var(--green-bright);">✓ Receipt cryptographically signed · Ed25519 · SHA-256: ${signed.contentHash?.slice(0,16)}...</div>
       </div>
-      ${shareBtn}
+      ${sharePanel}
+      ${entityBlock}
     </div>
   `;
 }
