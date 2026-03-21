@@ -476,7 +476,7 @@ async def _check_phash_ledger(phash: str) -> dict[str, Any] | None:
                     if distance <= 10:
                         return {
                             "matchType": "near-duplicate",
-                            "hammingDistance": distance,
+                            "hammingDistance": int(distance),
                             "firstSeenAt": r["first_seen_at"],
                             "firstSeenFile": r["file_name"],
                             "fileHash": r["file_hash"],
