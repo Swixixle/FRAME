@@ -3,7 +3,8 @@ services:
     name: frame-api
     runtime: python
     rootDir: .
-    buildCommand: npm ci && pip install -r apps/api/requirements.txt
+    # ffmpeg: podcast pipeline (30m trim, acoustic fingerprint). yt-dlp + whisper are in apps/api/requirements.txt
+    buildCommand: DEBIAN_FRONTEND=noninteractive apt-get update && apt-get install -y ffmpeg && npm ci && pip install -r apps/api/requirements.txt
     startCommand: cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: FRAME_REPO_ROOT
