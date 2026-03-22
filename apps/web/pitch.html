@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frame — Full System Brief</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0A0A0F; color: #E8E6E0; font-family: 'Georgia', 'Times New Roman', serif; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0A0A0F; }
+  ::-webkit-scrollbar-thumb { background: #2A2A3A; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState } = React;
+
+const COLORS = {
+  bg: '#0A0A0F',
+  surface: '#12121a',
+  border: '#2A2A3A',
+  text: '#E8E6E0',
+  muted: '#9a96a0',
+  accent: '#C9A227',
+  accentDim: '#6a5a1a',
+  green: '#4a8a5c',
+};
+
+function ReceiptMockup() {
+  return (
+    <div style={{
+      marginTop: 24,
+      padding: 24,
+      background: COLORS.surface,
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 4,
+      fontFamily: "'IBM Plex Mono', 'Consolas', monospace",
+      fontSize: 11,
+      lineHeight: 1.6,
+    }}>
+      <div style={{ color: COLORS.accent, letterSpacing: '0.2em', fontSize: 9, marginBottom: 12 }}>SIGNED RECEIPT · MOCK</div>
+      <div style={{ color: COLORS.text, marginBottom: 8 }}>claim: &quot;Contribution totals match FEC filings for the stated cycle.&quot;</div>
+      <div style={{ color: COLORS.muted }}>contentHash: <span style={{ color: COLORS.green }}>a3f2…9c1e</span></div>
+      <div style={{ color: COLORS.muted }}>signature (Ed25519): <span style={{ wordBreak: 'break-all' }}>base64:Qm9…ZQo=</span></div>
+      <div style={{ color: COLORS.muted, marginTop: 8 }}>sources: fec.gov · lda.senate.gov · unknowns: operational + epistemic</div>
+    </div>
+  );
+}
+
+function RoundtableSection() {
+  const [open, setOpen] = useState(null);
+  const cards = [
+    { id: 0, title: 'Journalism', body: 'Neutral receipts — no score, no “true/false” verdict. Citations and cryptographic integrity only.' },
+    { id: 1, title: 'Governance', body: 'Implication risk and deterministic boundary notes on high-risk claims — schema-level, not editorial.' },
+    { id: 2, title: 'Platforms', body: 'FetchAdapter isolates yt-dlp / HTTP churn from the signing core. Swap implementations without touching JCS.' },
+    { id: 3, title: 'Researchers', body: 'JCS + Ed25519 receipts are independently verifiable; async jobs avoid HTTP timeouts on slow adapters.' },
+  ];
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h3 style={{ fontSize: 14, fontWeight: 400, color: COLORS.accent, letterSpacing: '0.15em', marginBottom: 16 }}>ROUNDTABLE</h3>
+      <div style={{ display: 'grid', gap: 10 }}>
+        {cards.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setOpen(open === c.id ? null : c.id)}
+            style={{
+              textAlign: 'left',
+              background: open === c.id ? '#1a1a24' : COLORS.surface,
+              border: `1px solid ${open === c.id ? COLORS.accentDim : COLORS.border}`,
+              color: COLORS.text,
+              padding: '14px 18px',
+              cursor: 'pointer',
+              borderRadius: 4,
+              fontFamily: 'inherit',
+              fontSize: 15,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{c.title}</span>
+              <span style={{ color: COLORS.muted, fontSize: 18 }}>{open === c.id ? '−' : '+'}</span>
+            </div>
+            {open === c.id && (
+              <p style={{ marginTop: 12, color: COLORS.muted, fontSize: 14, lineHeight: 1.7 }}>{c.body}</p>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FramePitch() {
+  const [tab, setTab] = useState(0);
+  const tabs = [
+    'Mission',
+    'Problem',
+    'Evidence chain',
+    'Adapters',
+    'Signing',
+    'Async jobs',
+    'FetchAdapter',
+    'Roundtable',
+    'Roadmap',
+  ];
+  const panelStyle = { maxWidth: 720, margin: '0 auto', padding: '28px 24px 80px', minHeight: '60vh' };
+  const tabBar = {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 0,
+    borderBottom: `1px solid ${COLORS.border}`,
+    position: 'sticky',
+    top: 0,
+    background: COLORS.bg,
+    zIndex: 10,
+    padding: '12px 16px 0',
+  };
+  const tabBtn = (i) => ({
+    background: 'transparent',
+    border: 'none',
+    borderBottom: tab === i ? `2px solid ${COLORS.accent}` : '2px solid transparent',
+    color: tab === i ? COLORS.accent : COLORS.muted,
+    padding: '12px 14px',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: 11,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+  });
+
+  return (
+    <div style={{ minHeight: '100vh', background: COLORS.bg }}>
+      <header style={{ padding: '32px 24px 8px', borderBottom: `1px solid ${COLORS.border}` }}>
+        <div style={{ maxWidth: 720, margin: '0 auto' }}>
+          <div style={{ fontSize: 10, letterSpacing: '0.35em', color: COLORS.muted, marginBottom: 8 }}>FRAME</div>
+          <h1 style={{ fontSize: 28, fontWeight: 300, color: COLORS.text, lineHeight: 1.2 }}>Full system brief</h1>
+          <p style={{ marginTop: 12, color: COLORS.muted, fontSize: 15, lineHeight: 1.7 }}>
+            Cryptographic public-record receipts — citations, boundaries, verifiable by anyone.
+          </p>
+        </div>
+      </header>
+      <nav style={tabBar}>
+        {tabs.map((label, i) => (
+          <button key={label} type="button" style={tabBtn(i)} onClick={() => setTab(i)}>{label}</button>
+        ))}
+      </nav>
+      <main style={panelStyle}>
+        {tab === 0 && (
+          <section>
+            <p style={{ fontSize: 17, lineHeight: 1.85, color: COLORS.text }}>
+              Frame turns claims about public figures into <strong style={{ color: COLORS.accent, fontWeight: 500 }}>signed receipts</strong>:
+              neutral narrative, primary sources, split <code style={{ fontSize: 14 }}>unknowns</code>, and Ed25519 over JCS (RFC 8785).
+            </p>
+          </section>
+        )}
+        {tab === 1 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              Screenshots and clips spread faster than fact-checks. Long synchronous API calls time out on free tiers and in browsers.
+              Frame separates <strong style={{ color: COLORS.text }}>fetch</strong>, <strong style={{ color: COLORS.text }}>adapters</strong>, and <strong style={{ color: COLORS.text }}>signing</strong> so each layer can evolve independently.
+            </p>
+          </section>
+        )}
+        {tab === 2 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              Every sentence in the narrative cites a <code>sourceId</code>. Claims carry <code>implication_risk</code> and, when high, a deterministic <code>implication_note</code> — not LLM prose; lookup tables signed into the payload.
+            </p>
+            <ReceiptMockup />
+          </section>
+        )}
+        {tab === 3 && (
+          <section>
+            <ul style={{ color: COLORS.muted, fontSize: 16, lineHeight: 2, paddingLeft: 20 }}>
+              <li>FEC, Senate LDA, IRS 990 (ProPublica), Wikidata, Congress — normalized to <code>SourceRecord</code> rows.</li>
+              <li>Router sends OCR-extracted claims to the right adapter without blocking the receipt.</li>
+            </ul>
+          </section>
+        )}
+        {tab === 4 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              SHA-256 of the JCS-canonical body → <code>contentHash</code>. Signature is over SHA-256(JCS(unsigned payload including contentHash)). Same pipeline in TypeScript and Python verification.
+            </p>
+          </section>
+        )}
+        {tab === 5 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              <code>POST /v1/jobs</code> and <code>POST /v1/intake</code> return a <code>job_id</code> immediately. Poll <code>GET /v1/jobs/&#123;id&#125;</code> for <code>complete</code> or <code>failed</code>. Synchronous <code>/v1/generate-*</code> routes stay available.
+            </p>
+          </section>
+        )}
+        {tab === 6 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              URL in → <code>FetchResult</code> (bytes, metadata, <code>ChainOfCustodyBlock</code>) out. <strong style={{ color: COLORS.text }}>YtDlpAdapter</strong> for social hosts; <strong style={{ color: COLORS.text }}>DirectHttpAdapter</strong> for direct files. Router picks by URL pattern.
+            </p>
+          </section>
+        )}
+        {tab === 7 && (
+          <section>
+            <RoundtableSection />
+          </section>
+        )}
+        {tab === 8 && (
+          <section>
+            <p style={{ fontSize: 16, lineHeight: 1.8, color: COLORS.muted }}>
+              Persistent job store, full media UI + Hive, deeper entity ledger, embeddable receipt cards. Signing core remains stable.
+            </p>
+          </section>
+        )}
+      </main>
+      <footer style={{ padding: 24, borderTop: `1px solid ${COLORS.border}`, textAlign: 'center', fontSize: 11, color: COLORS.muted, letterSpacing: '0.1em' }}>
+        Frame · Ed25519 · JCS · FetchAdapter
+      </footer>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<FramePitch />);
+</script>
+</body>
+</html>

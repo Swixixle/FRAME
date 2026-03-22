@@ -11,10 +11,13 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -211,6 +214,15 @@ if _web_dir.is_dir():
 async def demo_redirect() -> FileResponse:
     return FileResponse(
         str(_repo_root() / "apps" / "web" / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+@app.get("/pitch")
+async def pitch_page() -> FileResponse:
+    """Static pitch deck (React via CDN) — same cache policy as /demo."""
+    return FileResponse(
+        str(_repo_root() / "apps" / "web" / "pitch.html"),
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
 
@@ -564,6 +576,169 @@ async def _generate_combined_receipt_for_job(
     return await asyncio.to_thread(_generate_combined_receipt_sync, cid, clients, ys)
 
 
+async def _handle_source_url_job(job: Job, request: JobRequest, start_ms: float) -> None:
+    """Fetch URL via FetchAdapter, build Frame receipt, sign with scripts/sign-payload.ts."""
+    from adapters.fetch_adapter import AdapterUnavailableError, FetchError
+    from adapters.router import get_adapter_for_url
+
+    temp_dir_from_ytdlp: str | None = None
+    spill_path: str | None = None
+
+    try:
+        try:
+            adapter = get_adapter_for_url(request.source_url or "")
+            fetch_result = await adapter.fetch(request.source_url or "")
+        except AdapterUnavailableError as e:
+            mark_complete(
+                job,
+                {
+                    "status": "partial",
+                    "source_url": request.source_url,
+                    "note": str(e),
+                    "unknowns": {
+                        "operational": [{"text": str(e), "resolution_possible": True}],
+                        "epistemic": [],
+                    },
+                },
+                start_ms,
+            )
+            return
+        except FetchError as e:
+            mark_failed(job, error=str(e))
+            return
+
+        if fetch_result.metadata.get("temp_fetch_dir"):
+            temp_dir_from_ytdlp = str(fetch_result.metadata["temp_fetch_dir"])
+
+        coc = fetch_result.chain_of_custody
+        temp_path = fetch_result.temp_file_path
+        if not temp_path:
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=f".{fetch_result.file_extension}",
+            )
+            tmp.write(fetch_result.file_bytes)
+            tmp.close()
+            temp_path = tmp.name
+            spill_path = temp_path
+
+        rid = str(uuid.uuid4())
+        source_id = "src-fetch-media"
+        meta: dict[str, Any] = {
+            "sha256": fetch_result.sha256_hash,
+            "content_type": fetch_result.content_type,
+            "file_size_bytes": len(fetch_result.file_bytes),
+            "chain_of_custody": {
+                "retrieval_timestamp": coc.retrieval_timestamp,
+                "server_ip": coc.server_ip,
+                "tls_verified": coc.tls_verified,
+                "http_status": coc.http_status,
+                "fetch_adapter_version": coc.fetch_adapter_version,
+                "response_headers": dict(coc.response_headers),
+            },
+            "platform_metadata": {
+                k: v for k, v in fetch_result.metadata.items() if k != "temp_fetch_dir"
+            },
+            "job_id": job.job_id,
+        }
+        claims = [
+            {
+                "id": "claim-1",
+                "statement": (
+                    f"File with SHA-256 {fetch_result.sha256_hash} was retrieved from "
+                    f"{request.source_url}"
+                ),
+                "assertedAt": coc.retrieval_timestamp,
+                "type": "observed",
+                "implication_risk": "low",
+            }
+        ]
+        sources = [
+            {
+                "id": source_id,
+                "adapter": "manual",
+                "url": request.source_url or "",
+                "title": f"Fetched media ({coc.fetch_adapter_version})",
+                "retrievedAt": coc.retrieval_timestamp,
+                "externalRef": fetch_result.sha256_hash[:16],
+                "metadata": meta,
+            }
+        ]
+        narrative = [
+            {
+                "text": (
+                    f"Frame retrieved {len(fetch_result.file_bytes)} bytes from "
+                    f"{request.source_url}. SHA-256: {fetch_result.sha256_hash}."
+                ),
+                "sourceId": source_id,
+            },
+            {
+                "text": (
+                    f"Fetch adapter {coc.fetch_adapter_version}; TLS verified: {coc.tls_verified}. "
+                    f"Server IP: {coc.server_ip or 'unknown'}."
+                ),
+                "sourceId": source_id,
+            },
+        ]
+        unknowns = {
+            "operational": [
+                {
+                    "text": "OCR and Whisper transcription not yet run on this file.",
+                    "resolution_possible": True,
+                },
+            ],
+            "epistemic": [
+                {
+                    "text": (
+                        "A cryptographic hash proves file identity at observation time; it does not "
+                        "establish the truth or falsity of any claims within the file."
+                    ),
+                    "resolution_possible": False,
+                },
+            ],
+        }
+        payload: dict[str, Any] = {
+            "schemaVersion": "1.0.0",
+            "receiptId": rid,
+            "createdAt": coc.retrieval_timestamp,
+            "claims": claims,
+            "sources": sources,
+            "narrative": narrative,
+            "unknowns": unknowns,
+            "contentHash": "",
+        }
+        payload_str = json.dumps(payload, ensure_ascii=False)
+        sign_result = subprocess.run(
+            ["npx", "tsx", str(REPO_ROOT / "scripts" / "sign-payload.ts")],
+            input=payload_str,
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+            timeout=120,
+        )
+        if sign_result.returncode == 0:
+            try:
+                signed = json.loads(sign_result.stdout.strip())
+                receipt = _with_receipt_url(signed)
+            except json.JSONDecodeError:
+                err = (sign_result.stderr or sign_result.stdout or "")[:500]
+                receipt = {**payload, "signing_error": err}
+        else:
+            err = (sign_result.stderr or sign_result.stdout or "")[:500]
+            receipt = {**payload, "signing_error": err}
+
+        mark_complete(job, receipt, start_ms)
+
+    finally:
+        if temp_dir_from_ytdlp:
+            shutil.rmtree(temp_dir_from_ytdlp, ignore_errors=True)
+        elif spill_path and os.path.exists(spill_path):
+            try:
+                os.unlink(spill_path)
+            except OSError:
+                pass
+
+
 async def _run_job(job: Job, request: JobRequest) -> None:
     """
     Background task. Calls the same adapter logic as synchronous /v1/generate-* routes.
@@ -576,11 +751,8 @@ async def _run_job(job: Job, request: JobRequest) -> None:
         receipt: dict[str, Any] | None = None
 
         if request.source_url:
-            receipt = {
-                "status": "fetch_adapter_pending",
-                "note": "FetchAdapter not yet wired. URL received and logged.",
-                "source_url": request.source_url,
-            }
+            await _handle_source_url_job(job, request, start_ms)
+            return
 
         elif request.receipt_type == "fec":
             receipt = await _generate_fec_receipt_for_job(request.candidate_id, request.name)

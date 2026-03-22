@@ -58,6 +58,23 @@ The job system wraps the same underlying adapter logic.
 **Current limitation:** Job store is in-memory. Resets on server restart.
 Acceptable at current stage — no persistent state required for grant demo.
 
+## FetchAdapter
+
+Interface: `apps/api/adapters/fetch_adapter.py`  
+Contract: URL in → `FetchResult` (bytes + metadata + `ChainOfCustodyBlock`) out.
+
+Implementations:
+- `YtDlpAdapter` — social media (Instagram, TikTok, YouTube, etc.)
+- `DirectHttpAdapter` — direct URLs, images, documents
+
+Router: `apps/api/adapters/router.py` selects adapter by URL pattern.
+
+Chain of custody block is signed into every media receipt:
+retrieval_timestamp, server_ip, tls_verified, http_status, fetch_adapter_version.
+
+Platform changes replace the implementation only. The interface contract,
+the signing pipeline, and the receipt schema are untouched.
+
 The verification is live. Anyone can check it. Anyone can re-verify independently.
 
 ## Architecture — Current
@@ -162,6 +179,11 @@ investigative journalism fellowships, The Markup, Freedom of the Press Foundatio
 Built in one overnight session March 19-20 2026.
 Started: broken 500 error, placeholder payload.
 Ended: live FEC pipeline, cryptographic verification, full UI with evidence chain.
+
+### Task 1.4 — FetchAdapter + pitch deck
+- **`apps/api/adapters/`:** `FetchAdapter` ABC, `YtDlpAdapter`, `DirectHttpAdapter`, `get_adapter_for_url`. `httpx` for direct HTTP.
+- **`_run_job` `source_url`:** real fetch → Frame-shaped payload → `scripts/sign-payload.ts` (Ed25519). `AdapterUnavailableError` → partial receipt with operational unknowns.
+- **`GET /pitch`:** serves `apps/web/pitch.html` (React 18 + Babel CDN, 9 tabs, roundtable, receipt mockup).
 
 ### Task 1.3 — Async job system
 - **`apps/api/job_store.py`:** in-memory jobs (`pending` → `processing` → `complete` | `failed`); resets on restart.
