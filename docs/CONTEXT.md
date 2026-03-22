@@ -24,6 +24,22 @@ Each receipt contains:
 - **`unknowns`** — split into **`operational`** (timeouts, rate limits, missing keys — may resolve) and **`epistemic`** (intent, causation, limits of public record — not fixable by better infra). Each item is `{ text, resolution_possible }` (`true` operational, `false` epistemic).
 - An Ed25519 signature proving the content hasn't been tampered with since signing
 
+## Implication Risk
+
+Every claims object carries `implication_risk: low | medium | high`.
+
+- `low` — biographical, structural, or definitional facts
+- `medium` — statistically unusual but not immediately alarming  
+- `high` — facts that strongly imply a conclusion Frame does not assert
+
+Claims with `implication_risk: high` always carry `implication_note` — 
+a single deterministic sentence stating what the fact does not establish.
+Notes are generated from IMPLICATION_NOTES lookup, not from an LLM.
+They are signed into the receipt payload.
+
+The UI surfaces `implication_note` as a tooltip on high-risk claims.
+This is schema enforcement, not style guidance.
+
 The verification is live. Anyone can check it. Anyone can re-verify independently.
 
 ## Architecture — Current
@@ -128,6 +144,12 @@ investigative journalism fellowships, The Markup, Freedom of the Press Foundatio
 Built in one overnight session March 19-20 2026.
 Started: broken 500 error, placeholder payload.
 Ended: live FEC pipeline, cryptographic verification, full UI with evidence chain.
+
+### Task 1.2 — `implication_risk` + `implication_note` on claims
+- **`packages/types`:** `ImplicationRisk`, `ClaimEvidenceType`, `ClaimRecord` fields; `buildClaim()`; `IMPLICATION_NOTES` / `getImplicationNote()` (`implication-notes.ts`).
+- **`packages/sources/index.ts`**, **`scripts/sign-media-analysis.ts`**, **`manchin-payload`:** all claims use `buildClaim()` with category-appropriate risk.
+- **`apps/api/implication_notes.py`** + **`ClaimRecord`** in **`main.py`** (Pydantic `model_validator`: high ⇒ note required).
+- **`docs/CONTEXT.md`:** Implication Risk section.
 
 ### Day 1 — Task 1.1 (split `unknowns` schema)
 - **`packages/types/index.ts`:** `UnknownItem`, `UnknownsBlock`, helpers `emptyUnknowns`, `opUnknown`, `epiUnknown`, `mergeUnknowns`; **`FrameReceiptPayload.unknowns`** required on every signed payload.

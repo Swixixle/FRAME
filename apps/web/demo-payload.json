@@ -20,7 +20,10 @@
     {
       "id": "claim-1",
       "statement": "I've never taken a dime from the fossil fuel industry",
-      "assertedAt": "2026-03-18T00:00:00.000Z"
+      "assertedAt": "2026-03-18T00:00:00.000Z",
+      "type": "observed",
+      "implication_risk": "high",
+      "implication_note": "Campaign finance totals reflect disclosed contributions and expenditures; they do not establish improper conduct, quid pro quo, or policy influence."
     }
   ],
   "sources": [
@@ -89,7 +92,7 @@
       "sourceId": "src-senate-disclosure-manchin"
     }
   ],
-  "contentHash": "9f2ccd34b6a97148191c6f19207c65f9bb754a92cbe15575dfd1105e25ec78e6",
+  "contentHash": "fc8564053f687317f90102a391dd436d3fc43cbc212a95a127bd2ed683c629d8",
   "publicKey": "MCowBQYDK2VwAyEASNrbOtM2iU/VqqrwZ57rb5YkHFmJGgVQJiCB/oT/7Ho=",
-  "signature": "ZSgmdpc2Wqo4vZAGoz0XYYRqrMFJb68CNadkNou1Utm8tauwIA2HggKnQEOaIBQtKY4oGwiUOZhcMG6h6FCtBQ=="
+  "signature": "MdcFFaZ4GJswQuUdWcq6JqagHRKB3fMpL2U2Hy3vMzREycgLJ1NoG/RHowJv6Ab5al6s0NPMQr8TrmZncIwfBg=="
 }

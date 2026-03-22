@@ -4,5 +4,5 @@
     "rootDir": ".",
     "outDir": "dist"
   },
-  "include": ["index.ts"]
+  "include": ["index.ts", "implication-notes.ts"]
 }

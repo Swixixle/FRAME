@@ -17,6 +17,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +29,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from adapters_media import dispatch_adapter
 from adapters_podcast import (
@@ -94,10 +95,25 @@ class NarrativeSentence(BaseModel):
     sourceId: str
 
 
+class ImplicationRisk(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
 class ClaimRecord(BaseModel):
     id: str
     statement: str
+    type: str = "observed"
+    implication_risk: ImplicationRisk = ImplicationRisk.low
+    implication_note: str | None = None
     assertedAt: str | None = None
+
+    @model_validator(mode="after")
+    def note_required_for_high(self) -> ClaimRecord:
+        if self.implication_risk == ImplicationRisk.high and not self.implication_note:
+            raise ValueError("implication_note required when implication_risk is 'high'")
+        return self
 
 
 class SourceRecord(BaseModel):

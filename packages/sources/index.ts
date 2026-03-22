@@ -6,7 +6,7 @@ import type {
   SourceRecord,
   UnknownsBlock,
 } from "@frame/types";
-import { epiUnknown, mergeUnknowns, opUnknown } from "@frame/types";
+import { buildClaim, epiUnknown, getImplicationNote, mergeUnknowns, opUnknown } from "@frame/types";
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -206,11 +206,13 @@ export async function buildLiveFecReceipt(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `Live FEC fundraising record for ${candidateName} (${candidateId})`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `Live FEC fundraising record for ${candidateName} (${candidateId})`,
+        "observed",
+        "medium",
+        new Date().toISOString(),
+      ),
     ],
     sources,
     narrative,
@@ -390,11 +392,14 @@ export async function buildLiveLobbyingReceipt(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `Public lobbying disclosure record for ${name}${claimSuffix}`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `Public lobbying disclosure record for ${name}${claimSuffix}`,
+        "observed",
+        "high",
+        new Date().toISOString(),
+        getImplicationNote("lobbying"),
+      ),
     ],
     sources,
     narrative,
@@ -543,11 +548,14 @@ export async function buildLobbyingCrossReference(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `Lobbying and campaign finance cross-reference for ${candidateName} (${candidateId})`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `Lobbying and campaign finance cross-reference for ${candidateName} (${candidateId})`,
+        "observed",
+        "high",
+        new Date().toISOString(),
+        getImplicationNote("cross_reference"),
+      ),
     ],
     sources,
     narrative,
@@ -630,11 +638,14 @@ export async function buildCombinedPoliticianReceipt(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `Campaign finance and lobbying record for ${candidateName} (${candidateId})`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `Campaign finance and lobbying record for ${candidateName} (${candidateId})`,
+        "observed",
+        "high",
+        new Date().toISOString(),
+        getImplicationNote("cross_reference"),
+      ),
     ],
     sources: allSources,
     narrative: combinedNarrative,
@@ -702,11 +713,13 @@ export async function buildLive990Receipt(
       receiptId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       claims: [
-        {
-          id: "claim-1",
-          statement: `IRS 990 record for ${orgName}`,
-          assertedAt: new Date().toISOString(),
-        },
+        buildClaim(
+          "claim-1",
+          `IRS 990 record for ${orgName}`,
+          "observed",
+          "low",
+          new Date().toISOString(),
+        ),
       ],
       sources,
       narrative,
@@ -807,11 +820,13 @@ export async function buildLive990Receipt(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `IRS 990 financial record for ${resolvedName} (EIN: ${resolvedEin})`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `IRS 990 financial record for ${resolvedName} (EIN: ${resolvedEin})`,
+        "observed",
+        "medium",
+        new Date().toISOString(),
+      ),
     ],
     sources,
     narrative,
@@ -881,11 +896,13 @@ export async function buildWikidataReceipt(
       receiptId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       claims: [
-        {
-          id: "claim-1",
-          statement: `Wikidata public record for ${personName}`,
-          assertedAt: new Date().toISOString(),
-        },
+        buildClaim(
+          "claim-1",
+          `Wikidata public record for ${personName}`,
+          "observed",
+          "low",
+          new Date().toISOString(),
+        ),
       ],
       sources,
       narrative,
@@ -1057,11 +1074,13 @@ export async function buildWikidataReceipt(
     receiptId: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     claims: [
-      {
-        id: "claim-1",
-        statement: `Wikidata public record for ${resolvedName} (${resolvedId})`,
-        assertedAt: new Date().toISOString(),
-      },
+      buildClaim(
+        "claim-1",
+        `Wikidata public record for ${resolvedName} (${resolvedId})`,
+        "observed",
+        "medium",
+        new Date().toISOString(),
+      ),
     ],
     sources,
     narrative,

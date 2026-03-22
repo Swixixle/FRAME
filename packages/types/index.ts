@@ -69,6 +69,12 @@ export function mergeUnknowns(a: UnknownsBlock, b: UnknownsBlock): UnknownsBlock
   };
 }
 
+/** Risk that readers infer more than the public record supports. */
+export type ImplicationRisk = "low" | "medium" | "high";
+
+/** How the claim relates to observation vs inference (schema-level, not prose). */
+export type ClaimEvidenceType = "observed" | "inferred" | "unknown";
+
 /** High-level claim being framed (neutral wording expected by governance). */
 export interface ClaimRecord {
   id: string;
@@ -76,7 +82,43 @@ export interface ClaimRecord {
   statement: string;
   /** ISO 8601 when the claim was observed or filed. */
   assertedAt?: string;
+  type: ClaimEvidenceType;
+  implication_risk: ImplicationRisk;
+  /** Required when `implication_risk` is `high` — deterministic boundary, signed into the receipt. */
+  implication_note?: string;
 }
+
+/**
+ * Build a claim object; throws if `high` risk is given without `implication_note`.
+ * Uses `statement` (Frame's field name) — not renamed to `text` — for signing compatibility.
+ */
+export function buildClaim(
+  id: string,
+  statement: string,
+  type: ClaimEvidenceType,
+  risk: ImplicationRisk,
+  assertedAt: string | undefined,
+  implicationNote?: string,
+): ClaimRecord {
+  if (risk === "high" && (implicationNote == null || implicationNote === "")) {
+    throw new Error(
+      `Claim with implication_risk 'high' requires an implication_note. Claim: "${statement}"`,
+    );
+  }
+  const base: ClaimRecord = {
+    id,
+    statement,
+    assertedAt,
+    type,
+    implication_risk: risk,
+  };
+  if (risk === "high" && implicationNote) {
+    return { ...base, implication_note: implicationNote };
+  }
+  return base;
+}
+
+export { IMPLICATION_NOTES, getImplicationNote, type EvidenceCategory } from "./implication-notes.js";
 
 /** Entity as returned from resolver / external graph. */
 export interface EntityCandidate {

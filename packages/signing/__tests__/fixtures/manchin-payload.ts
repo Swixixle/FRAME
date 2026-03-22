@@ -1,5 +1,5 @@
 import type { FrameReceiptPayload } from "../../../types/index.js";
-import { epiUnknown, opUnknown } from "../../../types/index.js";
+import { buildClaim, epiUnknown, getImplicationNote, opUnknown } from "../../../types/index.js";
 
 export function buildManchinFixture(): FrameReceiptPayload {
   return {
@@ -19,11 +19,14 @@ export function buildManchinFixture(): FrameReceiptPayload {
       ],
     },
     claims: [
-      {
-        id: "claim-1",
-        statement: "I've never taken a dime from the fossil fuel industry",
-        assertedAt: "2026-03-18T00:00:00.000Z",
-      },
+      buildClaim(
+        "claim-1",
+        "I've never taken a dime from the fossil fuel industry",
+        "observed",
+        "high",
+        "2026-03-18T00:00:00.000Z",
+        getImplicationNote("campaign_finance"),
+      ),
     ],
     sources: [
       {

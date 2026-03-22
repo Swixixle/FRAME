@@ -1,5 +1,5 @@
-import type { FrameReceiptPayload } from "@frame/types";
-import { epiUnknown, opUnknown } from "@frame/types";
+import type { FrameReceiptPayload, ImplicationRisk } from "@frame/types";
+import { buildClaim, epiUnknown, getImplicationNote, opUnknown } from "@frame/types";
 import { createHash, createPrivateKey, randomUUID } from "node:crypto";
 import { signReceipt } from "../packages/signing/index.js";
 
@@ -311,6 +311,20 @@ const claimStatement = firstClaimText
     ? `Podcast/video transcript receipt — acoustic SHA-256: ${(input.fileHash as string).slice(0, 16)}...`
     : `Media file integrity receipt — SHA-256: ${(input.fileHash as string).slice(0, 16)}...`;
 
+const hasOcrText =
+  !isPodcast &&
+  extractedText.trim().length > 0 &&
+  !extractedText.startsWith("OCR unavailable");
+
+let implicationRisk: ImplicationRisk = "low";
+let implicationNote: string | undefined;
+if (hasDetection) {
+  implicationRisk = "high";
+  implicationNote = getImplicationNote("ai_detection");
+} else if (hasOcrText) {
+  implicationRisk = "medium";
+}
+
 const claimSources: FrameReceiptPayload["sources"] = [];
 for (const claim of claimObjects.slice(0, 5)) {
   for (const ps of (claim.primary_sources ?? []).slice(0, 3)) {
@@ -434,11 +448,14 @@ const payload: FrameReceiptPayload = {
   receiptId: randomUUID(),
   createdAt: input.timestamp,
   claims: [
-    {
-      id: "claim-1",
-      statement: claimStatement,
-      assertedAt: input.timestamp,
-    },
+    buildClaim(
+      "claim-1",
+      claimStatement,
+      "observed",
+      implicationRisk,
+      input.timestamp,
+      implicationNote,
+    ),
   ],
   unknowns: {
     operational: operationalUnknowns,
