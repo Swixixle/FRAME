@@ -151,40 +151,84 @@ def _infer_entity_type(
     name: str,
     info: dict,
 ) -> str:
-    """Infer entity type from name and available info."""
     name_lower = name.lower()
+
+    # Check info hints first
+    if info.get("fec_id"):
+        return "politician"
+    if info.get("ein"):
+        return "nonprofit"
+
+    # Known executives
     known_exec = [
         "elon musk", "jeff bezos", "mark zuckerberg",
         "bill gates", "tim cook", "larry page",
-    ]
-    known_political_donors = [
-        "george soros", "charles koch", "david koch",
-        "sheldon adelson", "michael bloomberg",
-    ]
-    known_politicians = [
-        "joe biden", "donald trump", "kamala harris",
-        "nancy pelosi", "mitch mcconnell",
+        "sundar pichai", "satya nadella", "jamie dimon",
     ]
     if name_lower in known_exec:
         return "corporate_exec"
+
+    # Known political donors / hybrid figures
+    known_donors = [
+        "george soros", "charles koch", "david koch",
+        "sheldon adelson", "michael bloomberg",
+        "peter thiel", "reid hoffman",
+    ]
+    if name_lower in known_donors:
+        return "corporate_exec"
+
+    # Politician detection — broader patterns
+    politician_keywords = [
+        "senator", "representative", "congressman",
+        "congresswoman", "governor", "mayor",
+        "president", "secretary", "admiral", "general",
+    ]
+    if any(kw in name_lower for kw in politician_keywords):
+        return "politician"
+
+    # Common US politician surnames — expand this list
+    known_politicians = [
+        "rand paul", "paul", "markwayne mullin", "mullin",
+        "joe biden", "donald trump", "kamala harris",
+        "nancy pelosi", "mitch mcconnell", "chuck schumer",
+        "kevin mccarthy", "mike johnson", "bernie sanders",
+        "elizabeth warren", "ted cruz", "marco rubio",
+        "lindsey graham", "mitt romney", "john mccain",
+        "barack obama", "hillary clinton", "mike pence",
+        "ron desantis", "gavin newsom", "greg abbott",
+        "kirsten gillibrand", "amy klobuchar", "pete buttigieg",
+        "tulsi gabbard", "dan crenshaw", "matt gaetz",
+        "marjorie taylor greene", "alexandria ocasio-cortez",
+        "ilhan omar", "rashida tlaib", "jim jordan",
+        "andy biggs", "lauren boebert", "paul gosar",
+    ]
     if name_lower in known_politicians:
         return "politician"
-    if name_lower in known_political_donors:
-        return "corporate_exec"
-    if info.get("ein"):
-        return "nonprofit"
-    if info.get("fec_id"):
+
+    # If name has two words and looks like a person
+    # default to politician for public figure context
+    parts = name.strip().split()
+    if len(parts) == 2 and all(p[0].isupper() for p in parts):
+        # Two-word proper name in political context
+        # Default to politician to trigger FEC lookup
         return "politician"
+
     return "other"
 
 
 def _enrichment_path_for_type(entity_type: str) -> list[str]:
-    paths: dict[str, list[str]] = {
-        "corporate_exec": ["fec", "sec", "courtlistener", "charitable"],
-        "politician": ["fec", "opensecrets", "courtlistener", "statements"],
+    paths = {
+        "corporate_exec": [
+            "fec", "sec", "courtlistener", "charitable"
+        ],
+        "politician": [
+            "fec", "opensecrets", "courtlistener",
+            "statements", "charitable"
+        ],
         "nonprofit": ["charitable", "courtlistener"],
         "influencer": ["socialblade", "courtlistener"],
-        "podcaster": ["socialblade", "courtlistener"],
+        "podcaster": ["socialblade", "courtlistener", "fec"],
+        "musician": ["courtlistener", "charitable"],
         "other": ["courtlistener", "charitable"],
     }
     return paths.get(entity_type, ["courtlistener"])
