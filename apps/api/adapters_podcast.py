@@ -188,10 +188,15 @@ def _get_whisper_model() -> Any:
     if _whisper_model is None:
         from faster_whisper import WhisperModel
 
+        model_size = os.environ.get("FRAME_WHISPER_MODEL", "base")
         _whisper_model = WhisperModel(
-            os.environ.get("FRAME_WHISPER_MODEL", "base"),
+            model_size,
             device="cpu",
             compute_type="int8",
+            download_root=os.environ.get(
+                "FRAME_WHISPER_CACHE",
+                "/tmp/faster_whisper_models",
+            ),
         )
     return _whisper_model
 
