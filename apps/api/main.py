@@ -1836,6 +1836,46 @@ def get_receipt_json(receipt_id: str) -> dict[str, Any]:
             conn.close()
 
 
+@app.get("/v1/podcast-receipt/{receipt_id}/dossier")
+async def get_podcast_dossier(receipt_id: str) -> dict[str, Any]:
+    """
+    Retrieve the dossier assembled for a podcast receipt.
+    Returns dossiers for all entities found in that receipt.
+    """
+    return {
+        "receipt_id": receipt_id,
+        "note": (
+            "Use /v1/podcast-receipt/{receipt_id}/dossier/{entity_name} "
+            "to retrieve a specific entity dossier"
+        ),
+    }
+
+
+@app.get("/v1/podcast-receipt/{receipt_id}/dossier/{entity_name}")
+async def get_podcast_entity_dossier(receipt_id: str, entity_name: str) -> dict[str, Any]:
+    """
+    Retrieve the dossier for a specific entity from a podcast receipt.
+    """
+    from db import fetch_dossier
+    from enrichment.stage3 import _frame_uuid_for
+
+    name = urllib.parse.unquote(entity_name)
+    frame_id = _frame_uuid_for(receipt_id, name)
+
+    dossier = await fetch_dossier(frame_id)
+    if not dossier:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No dossier found for entity '{name}' "
+                f"in receipt '{receipt_id}'. "
+                f"Stage 3 may still be running or entity "
+                f"was not found in public records."
+            ),
+        )
+    return dossier.model_dump(mode="json")
+
+
 @app.get("/receipt/{receipt_id}", response_class=HTMLResponse)
 def receipt_share_page(receipt_id: str) -> HTMLResponse:
     """Shareable HTML view — client loads receipt JSON from GET /v1/receipt/{id}."""
@@ -2679,10 +2719,11 @@ async def podcast_investigate(request: PodcastInvestigateRequest) -> dict[str, A
                 for e in (c.get("entities") or [])
                 if e and len(e.strip()) > 2
             })
+            stage2_adapter_results: list[dict[str, Any]] = []
             if all_entities:
                 from adapters_podcast import run_stage2_enrichment
 
-                payload = await run_stage2_enrichment(
+                payload, stage2_adapter_results = await run_stage2_enrichment(
                     payload=payload,
                     entities=all_entities,
                     claims=claims,
@@ -2691,6 +2732,25 @@ async def podcast_investigate(request: PodcastInvestigateRequest) -> dict[str, A
             signed = await asyncio.to_thread(_sign_frame_payload, payload)
             receipt = _with_receipt_url(signed)
             mark_complete(job, receipt, start_ms)
+            # Stage 3 — dossier assembly (background, non-blocking)
+            if stage2_adapter_results:
+                async def _run_stage3() -> None:
+                    try:
+                        from enrichment.stage3 import run_stage3_dossier
+
+                        print(
+                            f"[stage3] background task started for receipt "
+                            f"{signed.get('receiptId')}",
+                        )
+                        await run_stage3_dossier(
+                            receipt=receipt,
+                            claims=claims,
+                            entities_resolved=stage2_adapter_results,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[stage3] dossier assembly error: {exc}")
+
+                asyncio.create_task(_run_stage3())
         except Exception as exc:  # noqa: BLE001
             mark_failed(job, str(exc))
 
@@ -2781,10 +2841,11 @@ async def podcast_investigate_upload(
                 for e in (c.get("entities") or [])
                 if e and len(e.strip()) > 2
             })
+            stage2_adapter_results: list[dict[str, Any]] = []
             if all_entities:
                 from adapters_podcast import run_stage2_enrichment
 
-                payload = await run_stage2_enrichment(
+                payload, stage2_adapter_results = await run_stage2_enrichment(
                     payload=payload,
                     entities=all_entities,
                     claims=claims,
@@ -2793,6 +2854,25 @@ async def podcast_investigate_upload(
             signed = await asyncio.to_thread(_sign_frame_payload, payload)
             receipt = _with_receipt_url(signed)
             mark_complete(job, receipt, start_ms)
+            # Stage 3 — dossier assembly (background, non-blocking)
+            if stage2_adapter_results:
+                async def _run_stage3() -> None:
+                    try:
+                        from enrichment.stage3 import run_stage3_dossier
+
+                        print(
+                            f"[stage3] background task started for receipt "
+                            f"{signed.get('receiptId')}",
+                        )
+                        await run_stage3_dossier(
+                            receipt=receipt,
+                            claims=claims,
+                            entities_resolved=stage2_adapter_results,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"[stage3] dossier assembly error: {exc}")
+
+                asyncio.create_task(_run_stage3())
         except Exception as exc:  # noqa: BLE001
             mark_failed(job, str(exc))
 

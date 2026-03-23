@@ -75,9 +75,14 @@ async def dispatch_entity_enrichment(
                     result["operational_unknowns"]
                 )
             results["adapter_results"].append({
+                "entity_name": entity,
                 "entity": entity,
                 "adapters_run": result.get("adapters_run", []),
                 "found": result.get("found", False),
+                "ein": result.get("ein"),
+                "fec_id": result.get("fec_id"),
+                "wikidata_id": result.get("wikidata_id"),
+                "organization": result.get("organization", ""),
             })
 
     # If no named entities produced results, document that
@@ -126,6 +131,13 @@ async def _enrich_single_entity(
         if wikidata_result:
             result["sources"].extend(wikidata_result.get("sources", []))
             result["found"] = True
+            wikidata_id = (
+                wikidata_result.get("sources", [{}])[0]
+                .get("metadata", {})
+                .get("wikidata_id", "")
+            )
+            if wikidata_id:
+                result["wikidata_id"] = wikidata_id
     except Exception:
         result["operational_unknowns"].append({
             "text": f"Wikidata lookup timed out for '{entity}'.",
@@ -145,6 +157,13 @@ async def _enrich_single_entity(
                     nonprofit_result.get("sources", [])
                 )
                 result["found"] = True
+                ein = (
+                    nonprofit_result.get("sources", [{}])[0]
+                    .get("metadata", {})
+                    .get("ein", "")
+                )
+                if ein:
+                    result["ein"] = ein
                 # Add verification note if 990 data found
                 total = nonprofit_result.get("total_revenue")
                 if total:

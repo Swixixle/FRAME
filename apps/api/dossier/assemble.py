@@ -140,7 +140,7 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
 
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     sonnet_model = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-4-20250514")
-    opus_model = os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-4-5-20250514")
+    opus_model = os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-4-5")
 
     dossier: DossierSchema | None = None
 

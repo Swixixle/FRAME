@@ -614,12 +614,13 @@ async def run_stage2_enrichment(
     payload: dict,
     entities: list[str],
     claims: list[dict],
-) -> dict:
+) -> tuple[dict, list[dict]]:
     """
     Run Stage 2 adapter dispatch on an assembled payload.
     Merges enrichment results back into the payload.
-    Returns updated payload.
+    Returns (updated payload, adapter_results for Stage 3).
     """
+    adapter_results: list[dict] = []
     try:
         from enrichment.dispatch import dispatch_entity_enrichment
 
@@ -627,6 +628,7 @@ async def run_stage2_enrichment(
             entities=entities,
             claims=claims,
         )
+        adapter_results = enrichment.get("adapter_results", [])
 
         # Merge additional sources
         existing_ids = {s["id"] for s in payload.get("sources", [])}
@@ -652,7 +654,8 @@ async def run_stage2_enrichment(
 
         # Add adapter summary to meta
         payload["meta"]["adapters_dispatched"] = [
-            r["entity"] for r in enrichment.get("adapter_results", [])
+            r.get("entity_name") or r.get("entity")
+            for r in enrichment.get("adapter_results", [])
         ]
 
     except Exception as e:
@@ -665,4 +668,4 @@ async def run_stage2_enrichment(
             "resolution_possible": True,
         })
 
-    return payload
+    return payload, adapter_results
