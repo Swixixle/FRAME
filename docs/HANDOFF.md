@@ -2,7 +2,7 @@
 
 **Purpose:** Give any collaborator or LLM (e.g. Claude) enough context to run, extend, and **deploy** Frame — especially on **Render** and for a **public demo URL**.
 
-**Companion:** Shorter living context in [`CONTEXT.md`](./CONTEXT.md) (grant deadline, rules, quick map).
+**Companion:** Shorter living context in [`CONTEXT.md`](./CONTEXT.md) (rules, quick map).
 
 ---
 
@@ -23,7 +23,7 @@ Frame turns **political claims** into **cryptographically signed receipts**:
 flowchart LR
   subgraph clients [Clients]
     Web["apps/web static demo"]
-    Sub[Submittable / reviewers]
+    Review[Reviewers / stakeholders]
   end
   subgraph ts [TypeScript monorepo]
     Types["@frame/types"]
@@ -75,7 +75,7 @@ flowchart LR
 | `scripts/jcs-stringify.mjs` | Node | stdin JSON → stdout JCS string (used by Python) |
 | `scripts/generate-keys.ts` | TS | Prints Ed25519 PEM keypair |
 | `render.yaml` | Render | Blueprint for `frame-api` (see §7) |
-| `docs/CONTEXT.md` | Doc | Grant + rules + short status |
+| `docs/CONTEXT.md` | Doc | Rules + short status |
 | `docs/HANDOFF.md` | Doc | This file |
 
 ---
@@ -200,7 +200,7 @@ After deploy, hit:
 Render can host **`apps/web`** as a **static site** (second service) or any static host (Cloudflare Pages, GitHub Pages, Netlify):
 
 - Deploy `apps/web` contents; ensure **`demo-payload.json`** is included.
-- Point the demo at the **live API** via query: `?api=https://<frame-api>.onrender.com` (or bake default into `index.html` for grant submission).
+- Point the demo at the **live API** via query: `?api=https://<frame-api>.onrender.com` (or bake default into `index.html`).
 
 ---
 
@@ -224,14 +224,7 @@ After key rotation: re-run `npx tsx scripts/seed-demo.ts` and redeploy/commit up
 
 ---
 
-## 10. Grant / submission context (short)
-
-- **Brown Institute for Media Innovation:** up to **$150k**, deadline **April 1, 2026**, submit via **brown.submittable.com**; a **demo URL** is part of the package.
-- **Living checklist:** `docs/CONTEXT.md`.
-
----
-
-## 11. Quick troubleshooting
+## 10. Quick troubleshooting
 
 | Symptom | Likely cause |
 |---------|----------------|
@@ -243,7 +236,7 @@ After key rotation: re-run `npx tsx scripts/seed-demo.ts` and redeploy/commit up
 
 ---
 
-## 12. Suggested next commits / tasks
+## 11. Suggested next commits / tasks
 
 1. **Render:** Fix **build** so Node + `npm ci` runs for `jcs-stringify.mjs` (if not already).
 2. **Static deploy** for `apps/web` with default API URL set to production.

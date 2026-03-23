@@ -14,7 +14,9 @@ export type SourceAdapterKind =
   | "edgar"
   | "manual"
   | "congress"
-  | "wikidata";
+  | "wikidata"
+  | "audio_file"
+  | "podcast";
 
 /** A verifiable document or API-backed citation. */
 export interface SourceRecord {
@@ -69,6 +71,16 @@ export function mergeUnknowns(a: UnknownsBlock, b: UnknownsBlock): UnknownsBlock
   };
 }
 
+export interface LayerZero {
+  text: string;
+  selected_finding_type: string;
+  salience_score: number;
+  cohort_definition: string;
+  generated_by: string;
+  generation_timestamp: string;
+  source_claim_id?: string;
+}
+
 /** Risk that readers infer more than the public record supports. */
 export type ImplicationRisk = "low" | "medium" | "high";
 
@@ -86,6 +98,12 @@ export interface ClaimRecord {
   implication_risk: ImplicationRisk;
   /** Required when `implication_risk` is `high` — deterministic boundary, signed into the receipt. */
   implication_note?: string;
+  source_model?: {
+    model: string;
+    version: string;
+    temperature: number;
+    prompt_hash: string;
+  };
 }
 
 /**
@@ -146,6 +164,8 @@ export interface FrameReceiptPayload {
   receiptId: string;
   /** ISO 8601 creation time. */
   createdAt: string;
+  mode?: "exploratory" | "deterministic";
+  layer_zero?: LayerZero;
   claims: ClaimRecord[];
   sources: SourceRecord[];
   narrative: NarrativeSentence[];

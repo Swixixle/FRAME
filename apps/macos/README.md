@@ -69,7 +69,7 @@ Install:
 
 1. Copy `apps/macos/FrameCapture.app` to **Applications** (or run it from the repo).
 2. First launch: **right‑click → Open** if Gatekeeper warns (unsigned app).
-3. Grant **Screen Recording** for **FrameCapture** (see above).
+3. Allow **Screen Recording** for **FrameCapture** (see above).
 
 Double‑clicking the app runs **one** capture cycle (crosshair → API → clipboard). There is no window.
 

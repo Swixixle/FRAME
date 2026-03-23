@@ -21,3 +21,25 @@ services:
         sync: false
       - key: FRAME_PUBLIC_KEY
         sync: false
+  - type: worker
+    name: frame-worker
+    runtime: python
+    rootDir: .
+    buildCommand: pip install -r apps/api/requirements.txt
+    startCommand: cd apps/api && python worker.py
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: FEC_API_KEY
+        sync: false
+      - key: FRAME_REPO_ROOT
+        value: /opt/render/project/src
+        sync: false
+      - key: FRAME_PRIVATE_KEY
+        sync: false
+      - key: FRAME_PUBLIC_KEY
+        sync: false

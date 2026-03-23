@@ -1,0 +1,2 @@
+# Frame — aggregate deps (Render uses apps/api/requirements.txt directly)
+-r apps/api/requirements.txt

@@ -1,6 +1,6 @@
 {
   "source_id": "lda",
-  "captured_at": "2026-03-22T04:56:24.039317+00:00",
+  "captured_at": "2026-03-23T04:36:55.600190+00:00",
   "endpoint_description": "Senate LDA /api/v1/filings/ \u2014 registrant name search",
   "schema_monitor_version": "schema_monitor_v1",
   "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
@@ -558,7 +558,61 @@
     }
   ],
   "is_genesis": true,
-  "version_history": [],
-  "version_history_count": 0,
-  "last_verified_at": "2026-03-22T05:05:48.964201+00:00"
+  "version_history": [
+    {
+      "captured_at": "2026-03-22T04:56:24.039317+00:00",
+      "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
+      "critical_fields_hash": "736e75816e34368586bfdf9e2d47e38bdb51fb2806e779b26f7a53e5c06c7250"
+    },
+    {
+      "captured_at": "2026-03-23T03:32:33.561315+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "captured_at": "2026-03-23T03:32:37.996290+00:00",
+      "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
+      "critical_fields_hash": "736e75816e34368586bfdf9e2d47e38bdb51fb2806e779b26f7a53e5c06c7250"
+    },
+    {
+      "captured_at": "2026-03-23T03:40:24.770788+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "captured_at": "2026-03-23T03:40:33.719269+00:00",
+      "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
+      "critical_fields_hash": "736e75816e34368586bfdf9e2d47e38bdb51fb2806e779b26f7a53e5c06c7250"
+    },
+    {
+      "captured_at": "2026-03-23T03:43:36.445339+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "captured_at": "2026-03-23T03:54:58.996532+00:00",
+      "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
+      "critical_fields_hash": "736e75816e34368586bfdf9e2d47e38bdb51fb2806e779b26f7a53e5c06c7250"
+    },
+    {
+      "captured_at": "2026-03-23T04:31:59.838740+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "captured_at": "2026-03-23T04:32:31.155875+00:00",
+      "full_schema_hash": "b94a36769b3da1819da0c4faec5499c8d511da8b424f0605893bd51fb5a7a5c4",
+      "critical_fields_hash": "736e75816e34368586bfdf9e2d47e38bdb51fb2806e779b26f7a53e5c06c7250"
+    },
+    {
+      "captured_at": "2026-03-23T04:36:20.133623+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "version_history_count": 10,
+  "last_verified_at": "2026-03-23T05:15:46.204442+00:00",
+  "previous_full_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+  "schema_changed": true,
+  "change_detected_at": "2026-03-23T04:36:55.600190+00:00"
 }

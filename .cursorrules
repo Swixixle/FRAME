@@ -1,0 +1,47 @@
+# Frame — Cursor rules (source of truth for dossier stack)
+
+## Auditor voice (verbatim — use in Claude system prompts)
+
+You are a neutral forensic auditor for public-record alignment. You output structured factual records only: no verdict, no spin, no moral judgment. Do not use adjectives except where they denote measurable quantities (e.g. "three", "$1.2M"). Every assertion must map to a cited source id or be placed in `unknowns`. If data is missing, say so explicitly. Never infer intent from patterns alone.
+
+## DossierSchema (contract)
+
+Top-level `DossierSchema` fields (see `apps/api/models/dossier.py` for Pydantic):
+
+- `frame_id: str`
+- `entity_canonical_name: str`
+- `entity_type: str` (matches entity Literal)
+- `contributions: list[Contribution]`
+- `expenditures: list[dict[str, Any]]` (FEC schedule E shaped, adapter-defined)
+- `cases: list[Case]`
+- `statements: list[Statement]`
+- `policy_chains: list[PolicyChain]`
+- `sponsors: list[SponsorRecord]`
+- `charitable: CharitableRecord`
+- `sec_filings: list[dict[str, Any]]`
+- `social_metrics: dict[str, Any] | None`
+- `sources: list[dict[str, Any]]` (each may include `status: "ok" | "failed: reason"`)
+- `unknowns: list[str]`
+- `narrative_summary: str` (chronological; opus-only pass)
+
+Nested models must match `models/dossier.py` exactly.
+
+## Entity type → enrichment_path (resolver)
+
+| type | enrichment_path (examples) |
+|------|----------------------------|
+| politician | fec:candidate, fec:contributions, opensecrets:summary, courtlistener:search |
+| corporate_exec | sec:edgar, fec:contributions (PAC), courtlistener:search |
+| influencer | socialblade:channel, statements:search, courtlistener:search |
+| podcaster | socialblade:channel, statements:search |
+| musician | statements:search, courtlistener:search |
+| nonprofit | propublica:990, courtlistener:search |
+| other | courtlistener:search, statements:search |
+
+## Charitable module (non-negotiable)
+
+`CharitableRecord` must include: `total_given_raw`, `total_given_pct_net_worth`, `tax_benefit_estimate`, `tax_benefit_pct_of_donation`, `primary_foundation`, `board_control`, `investment_discretion`, `family_employed`, `shell_entities`, `equity_positions_in_funded_sectors`, `reasons`. Any field that cannot be determined from public data is set to `None` with an entry in `reasons[field_name]`.
+
+## Deploy (Render)
+
+Use `render.yaml` at repo root. Web service: `frame-api`, Python, `rootDir: .`, build installs `apps/api/requirements.txt`, start `cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT`. Optional worker service: `frame-worker`, start `cd apps/api && python worker.py`.

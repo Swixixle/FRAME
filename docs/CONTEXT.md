@@ -56,7 +56,7 @@ The synchronous `/v1/generate-*` endpoints remain available and unchanged.
 The job system wraps the same underlying adapter logic.
 
 **Current limitation:** Job store is in-memory. Resets on server restart.
-Acceptable at current stage — no persistent state required for grant demo.
+Acceptable at current stage — no persistent state required for the demo.
 
 ## Media UI
 
@@ -216,7 +216,7 @@ Distribution layer (future):
 - Combined media pipeline: hash → detect → verify sources → ledger → sign → verify
 - **Gap 3 (OCR → router → adapters):** `apps/api/router.py` + `adapters_media.py` — after Claude extracts claims, `route_claim()` selects fec / irs990 (ProPublica) / lda / congress / wikidata; results on each claim as `adapterResults`; `sign-media-analysis.ts` adds adapter rows to `sources[]` with `metadata.adapterData`. **`POST /v1/analyze-and-verify`** = analyze + route + sign in one call. **`CONGRESS_API_KEY`** required for Congress.gov bill search (free at api.congress.gov).
 - **Gap 4 (entity behavioral ledger):** SQLite table `entity_receipts` — each verified media receipt appends rows per (claim × entity) from `extractedClaimObjects`. **`GET /v1/entity/{name}`**, **`GET /v1/entity/{name}/summary`**, **`GET /v1/entities`**. **`GET /entity/{name}`** serves `apps/web/entity.html` (Cinzel baroque frame). Demo UI links “View entity record →” after analyze-and-verify when entities are present.
-- **Podcast / video adapter:** `apps/api/adapters_podcast.py` — `yt-dlp` download, local **`openai-whisper` `base`** transcription, Claude claim extraction with timestamps + speakers, same source verification + `route_claim` + signing as media. **`POST /v1/analyze-podcast`** (JSON `url` or multipart `file`), **`POST /v1/analyze-and-verify-podcast`**. **`scripts/sign-media-analysis.ts`** supports `sourceType: "podcast"`, transcript source row (`whisper://local/{hash}`), narrative lines `At HH:MM:SS, speaker said: …`. **v1 cap: 30 minutes** of audio (`FRAME_PODCAST_MAX_SECONDS`). Requires **ffmpeg** on `PATH` for trim + acoustic fingerprint. Whisper **~140MB** model download on first run (slow cold start on free tier). **Spotify app links** not supported — use public RSS episode URLs or YouTube.
+- **Podcast / video adapter:** `apps/api/adapters_podcast.py` — `yt-dlp` download, local **`faster-whisper` `base`** transcription, Claude claim extraction with timestamps + speakers, same source verification + `route_claim` + signing as media. **`POST /v1/analyze-podcast`** (JSON `url` or multipart `file`), **`POST /v1/analyze-and-verify-podcast`**. **`scripts/sign-media-analysis.ts`** supports `sourceType: "podcast"`, transcript source row (`whisper://local/{hash}`), narrative lines `At HH:MM:SS, speaker said: …`. **v1 cap: 30 minutes** of audio (`FRAME_PODCAST_MAX_SECONDS`). Requires **ffmpeg** on `PATH` for trim + acoustic fingerprint. First run may download model weights (slow cold start on free tier). **Spotify app links** not supported — use public RSS episode URLs or YouTube.
 - **Meta Ad Library (“was it paid for”):** `apps/api/adapters/meta_ad_library.py` — Graph API `ads_archive` for political and issue ads; spend ranges normalized; epistemic unknowns for disclosure limits. **`POST /v1/generate-ad-library-receipt`**, **`receipt_type: "ad_library"`** on **`POST /v1/jobs`**. Demo: **Ad Spend** mode on `/demo`. Requires **`META_AD_LIBRARY_TOKEN`** (`ads_read`); without token, signed receipt still returned with operational unknown.
 
 ## Immediate Next Task
@@ -239,11 +239,6 @@ on what issues, in what timeframe relative to their votes.
 - demo-payload.json is hand-authored Manchin fossil fuel fixture
 - seed-demo.ts regenerates demo-payload.json from local keys
 
-## Funding Notes
-Brown Institute requires Columbia/Stanford affiliation — not eligible.
-Better targets: Knight Foundation Prototype Fund, Mozilla Technology Fund,
-investigative journalism fellowships, The Markup, Freedom of the Press Foundation.
-
 ## Session History
 Built in one overnight session March 19-20 2026.
 Started: broken 500 error, placeholder payload.
@@ -258,7 +253,7 @@ Ended: live FEC pipeline, cryptographic verification, full UI with evidence chai
 ### Task 3.1 — Schema baseline capture + PROOF.md
 - **`apps/api/schema_monitor.py`:** path normalization, recursive `_extract_schema`, `fingerprint_schema` (full + critical hashes), `capture_baseline` / `save_baseline` / `compare_to_baseline`, JSON storage under **`apps/api/baselines/`**.
 - **Startup:** `capture_schema_baselines` runs FEC, LDA, ProPublica 990, Wikidata, Meta Ad Library adapter samples; failures still record error-shaped baselines.
-- **`GET /v1/schema-baselines`:** admin/grant view of capture status and truncated hashes.
+- **`GET /v1/schema-baselines`:** admin view of capture status and truncated hashes.
 - **`docs/PROOF.md`:** falsifiable curl proofs + architecture table; **`npm run proof:date`** stamps the generated date line.
 
 ### Task 1.4 — FetchAdapter + pitch deck
@@ -316,6 +311,10 @@ Perceptual hashing, hash ledger, repost mapping.
 Do not build until Media tier is stable.
 
 ---
+
+## Frames + dossiers (apps/api)
+
+Parallel to `/v1/*` receipts: **`POST /frames`** creates a signed `Frame` (Ed25519 over SHA-256 of `claim + claimant_name + timestamp`), enqueues enrichment (ARQ + Redis when `REDIS_URL` set, else in-process `asyncio`). **`GET /frames/{id}`** returns enrichment status; **`GET /frames/{id}/dossier`** returns `202` while pending, else `DossierSchema` JSON. Modules: `cache/redis.py`, `models/*`, `enrichment/*`, `entity/resolver.py`, `dossier/assemble.py`, `worker.py`. Env keys: see `apps/api/.env.example`. Demo seed: `npx tsx scripts/seed-frames-demo.ts` (`API_BASE` optional).
 
 ## Known Gaps (current)
 

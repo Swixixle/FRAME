@@ -10,6 +10,9 @@ import base64
 import hashlib
 import json
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 import re
 import shutil
 import sqlite3
@@ -39,8 +42,10 @@ from adapters_media import dispatch_adapter
 from adapters_podcast import (
     PODCAST_MAX_SECONDS,
     acoustic_fingerprint,
+    assemble_podcast_payload,
     download_audio,
     extract_speaker_claims,
+    generate_layer_zero,
     save_uploaded_audio,
     transcribe_audio,
     trim_audio_max,
@@ -195,7 +200,7 @@ class AdLibraryRequest(BaseModel):
 
 
 class JobRequest(BaseModel):
-    """Async job submission — one of `source_url` or `receipt_type` should be set."""
+    """Async job request — one of `source_url` or `receipt_type` should be set."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -211,6 +216,11 @@ class JobRequest(BaseModel):
     limit: int | None = None
 
 
+class PodcastInvestigateRequest(BaseModel):
+    source_url: str | None = None
+    subject_context: str | None = "public figure"
+
+
 app = FastAPI(title="Frame API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
@@ -218,6 +228,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from api.dossier_route import router as dossier_http_router  # noqa: E402
+from api.frames import router as frames_http_router  # noqa: E402
+
+app.include_router(frames_http_router)
+app.include_router(dossier_http_router)
 
 _web_dir = _repo_root() / "apps" / "web"
 if _web_dir.is_dir():
@@ -477,8 +493,31 @@ async def root() -> dict[str, str]:
 
 @app.get("/health")
 @app.get("/health/")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "frame-api"}
+async def health() -> dict[str, Any]:
+    """Liveness + optional DB/Redis checks for dossier stack."""
+    db_ok = False
+    redis_ok = False
+    try:
+        from db import health_db
+
+        db_ok = await health_db()
+    except Exception:  # noqa: BLE001
+        db_ok = False
+    try:
+        from cache.redis import get_cache
+
+        client = get_cache()
+        if client is not None:
+            await client.ping()
+            redis_ok = True
+    except Exception:  # noqa: BLE001
+        redis_ok = False
+    return {
+        "status": "ok",
+        "service": "frame-api",
+        "db": db_ok,
+        "redis": redis_ok,
+    }
 
 
 @app.get("/v1/schema-baselines")
@@ -486,7 +525,7 @@ async def get_schema_baselines() -> dict[str, Any]:
     """
     Returns current schema baseline status for all monitored sources.
     Shows hash, capture date, field count, and whether a change was detected.
-    Used for: PROOF.md generation, admin verification, grant documentation.
+    Used for: PROOF.md generation, admin verification, and documentation.
     """
     sources = ["fec", "lda", "propublica_990", "wikidata", "meta_ad_library"]
     result: dict[str, Any] = {}
@@ -2379,7 +2418,7 @@ async def _build_podcast_analysis_response(
         "extractedClaimObjects": extracted_claim_objects,
         "detection": {
             "detector": "whisper",
-            "note": "Local openai-whisper (base). First run downloads ~140MB model weights; cold start can be slow on free tier.",
+            "note": "Local faster-whisper (base). First run downloads model weights; cold start can be slow on free tier.",
             "model": os.environ.get("FRAME_WHISPER_MODEL", "base"),
         },
         "ledgerMatch": None,
@@ -2554,6 +2593,178 @@ async def analyze_and_verify(file: UploadFile = File(...)) -> dict[str, Any]:
     out = _finalize_media_sign(req, signed_core)
     # Echo OCR claim objects for demo UI (not part of signed receipt; verify ignores extra keys)
     return {**out, "extractedClaimObjects": body.get("extractedClaimObjects", [])}
+
+
+@app.post("/v1/podcast-investigate")
+async def podcast_investigate(request: PodcastInvestigateRequest) -> dict[str, Any]:
+    """
+    Full investigative pipeline for audio/video URLs.
+    URL → yt-dlp → Whisper → Claude claim extraction →
+    Layer Zero → signed receipt.
+    Returns job_id immediately. Poll /v1/jobs/{job_id} for result.
+    """
+    if not request.source_url:
+        raise HTTPException(status_code=400, detail="source_url is required")
+
+    job = create_job(f"Podcast investigation: {request.source_url[:80]}")
+
+    async def _run() -> None:
+        mark_processing(job)
+        start_ms = time.time() * 1000
+        try:
+            audio_info = await asyncio.to_thread(download_audio, request.source_url)
+            audio_path, _was_trimmed = await asyncio.to_thread(
+                trim_audio_max, audio_info["path"], PODCAST_MAX_SECONDS
+            )
+            transcription = await asyncio.to_thread(transcribe_audio, audio_path)
+            claims: list[dict[str, Any]] = []
+            if transcription.get("full_text") and os.environ.get("ANTHROPIC_API_KEY"):
+                try:
+                    claims = await asyncio.to_thread(
+                        extract_speaker_claims,
+                        transcription,
+                        audio_info.get("title", "untitled"),
+                    )
+                except Exception as claim_err:  # noqa: BLE001
+                    print(f"[podcast-investigate] Claim extraction failed: {claim_err}")
+            # Wire entities from transcript into enrichment pipeline
+            all_entities = list(
+                {
+                    e
+                    for c in claims
+                    for e in (c.get("entities") or [])
+                    if e and len(e) > 2
+                }
+            )
+            if all_entities:
+                try:
+                    from entity.resolver import resolve_entity
+
+                    for entity_name in all_entities[:5]:  # cap at 5 per receipt
+                        resolved = await resolve_entity(entity_name)
+                        if resolved:
+                            print(
+                                "[podcast-investigate] entity resolved: "
+                                f"{resolved.canonical_name} ({resolved.type})"
+                            )
+                except Exception as entity_err:  # noqa: BLE001
+                    # Non-fatal — receipt generates even if entity resolution fails
+                    print(
+                        f"[podcast-investigate] entity resolution skipped: {entity_err}"
+                    )
+            layer_zero: dict[str, Any] = {}
+            if claims and os.environ.get("ANTHROPIC_API_KEY"):
+                layer_zero = await asyncio.to_thread(
+                    generate_layer_zero,
+                    claims,
+                    request.subject_context or "public figure",
+                )
+            payload = assemble_podcast_payload(
+                audio_info=audio_info,
+                transcription=transcription,
+                claims=claims,
+                layer_zero=layer_zero,
+                source_input="url",
+            )
+            signed = await asyncio.to_thread(_sign_frame_payload, payload)
+            receipt = _with_receipt_url(signed)
+            mark_complete(job, receipt, start_ms)
+        except Exception as exc:  # noqa: BLE001
+            mark_failed(job, str(exc))
+
+    asyncio.create_task(_run())
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "poll_url": f"/v1/jobs/{job.job_id}",
+        "description": job.description,
+    }
+
+
+@app.post("/v1/podcast-investigate-upload")
+async def podcast_investigate_upload(
+    file: UploadFile = File(...),
+    subject_context: str = "public figure",
+) -> dict[str, Any]:
+    """
+    Same pipeline as /v1/podcast-investigate but accepts an uploaded file.
+    Returns job_id immediately. Poll /v1/jobs/{job_id} for result.
+    """
+    data = await file.read()
+    filename = file.filename or "upload.mp3"
+    job = create_job(f"Podcast investigation (upload): {filename}")
+
+    async def _run() -> None:
+        mark_processing(job)
+        start_ms = time.time() * 1000
+        try:
+            audio_info = await asyncio.to_thread(save_uploaded_audio, data, filename)
+            audio_path, _was_trimmed = await asyncio.to_thread(
+                trim_audio_max, audio_info["path"], PODCAST_MAX_SECONDS
+            )
+            transcription = await asyncio.to_thread(transcribe_audio, audio_path)
+            claims: list[dict[str, Any]] = []
+            if transcription.get("full_text") and os.environ.get("ANTHROPIC_API_KEY"):
+                try:
+                    claims = await asyncio.to_thread(
+                        extract_speaker_claims,
+                        transcription,
+                        audio_info.get("title", "untitled"),
+                    )
+                except Exception as claim_err:  # noqa: BLE001
+                    print(f"[podcast-investigate-upload] Claim extraction failed: {claim_err}")
+            # Wire entities from transcript into enrichment pipeline
+            all_entities = list(
+                {
+                    e
+                    for c in claims
+                    for e in (c.get("entities") or [])
+                    if e and len(e) > 2
+                }
+            )
+            if all_entities:
+                try:
+                    from entity.resolver import resolve_entity
+
+                    for entity_name in all_entities[:5]:  # cap at 5 per receipt
+                        resolved = await resolve_entity(entity_name)
+                        if resolved:
+                            print(
+                                "[podcast-investigate-upload] entity resolved: "
+                                f"{resolved.canonical_name} ({resolved.type})"
+                            )
+                except Exception as entity_err:  # noqa: BLE001
+                    # Non-fatal — receipt generates even if entity resolution fails
+                    print(
+                        f"[podcast-investigate-upload] entity resolution skipped: {entity_err}"
+                    )
+            layer_zero: dict[str, Any] = {}
+            if claims and os.environ.get("ANTHROPIC_API_KEY"):
+                layer_zero = await asyncio.to_thread(
+                    generate_layer_zero,
+                    claims,
+                    subject_context or "public figure",
+                )
+            payload = assemble_podcast_payload(
+                audio_info=audio_info,
+                transcription=transcription,
+                claims=claims,
+                layer_zero=layer_zero,
+                source_input="upload",
+            )
+            signed = await asyncio.to_thread(_sign_frame_payload, payload)
+            receipt = _with_receipt_url(signed)
+            mark_complete(job, receipt, start_ms)
+        except Exception as exc:  # noqa: BLE001
+            mark_failed(job, str(exc))
+
+    asyncio.create_task(_run())
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "poll_url": f"/v1/jobs/{job.job_id}",
+        "description": job.description,
+    }
 
 
 @app.post("/v1/analyze-podcast")

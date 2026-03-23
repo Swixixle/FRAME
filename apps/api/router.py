@@ -113,5 +113,22 @@ def route_claim(claim: dict[str, Any]) -> list[dict[str, Any]]:
             specs.append({"adapter": "wikidata", "params": {"name": first}})
         return specs
 
-    # general | scientific | legal | death_toll | anything else — v1 skip
+    # Scientific and ecological claims route to Wikidata
+    # as best available structured knowledge source.
+    # Future: route to academic APIs (PubMed, CrossRef, Wikipedia).
+    scientific_pattern = re.compile(
+        r"research|stud(y|ies)|found|observed|documented|"
+        r"species|animal|behavior|habitat|extinct|climate|"
+        r"million years|evolved|genome|biology",
+        re.I,
+    )
+    if scientific_pattern.search(text):
+        name = first or _guess_name_from_text(text)
+        if name:
+            specs.append({"adapter": "wikidata", "params": {"name": name}})
+        elif text:
+            specs.append({"adapter": "wikidata", "params": {"name": text[:200]}})
+        return specs
+
+    # general | legal | death_toll | anything else — v1 skip
     return []
