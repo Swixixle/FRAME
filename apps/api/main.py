@@ -500,23 +500,23 @@ async def root() -> dict[str, str]:
 @app.get("/health")
 @app.get("/health/")
 async def health() -> dict[str, Any]:
-    """Liveness + optional DB/Redis checks for dossier stack."""
+    """Liveness check — always responds immediately."""
     db_ok = False
     redis_ok = False
     try:
         from db import health_db
 
-        db_ok = await health_db()
-    except Exception:  # noqa: BLE001
+        db_ok = await asyncio.wait_for(health_db(), timeout=2.0)
+    except Exception:
         db_ok = False
     try:
         from cache.redis import get_cache
 
         client = get_cache()
         if client is not None:
-            await client.ping()
+            await asyncio.wait_for(client.ping(), timeout=2.0)
             redis_ok = True
-    except Exception:  # noqa: BLE001
+    except Exception:
         redis_ok = False
     return {
         "status": "ok",
