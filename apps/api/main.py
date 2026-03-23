@@ -240,15 +240,10 @@ if _web_dir.is_dir():
     app.mount("/web", StaticFiles(directory=str(_web_dir), html=True), name="web")
 
 
-@app.on_event("startup")
-async def capture_schema_baselines() -> None:
+async def _run_schema_baseline_capture() -> None:
     """
-    On startup, attempt to capture schema baselines for all active adapters.
-    Uses real API calls with minimal queries (one result each).
-    Failures are logged but never block startup.
-
-    First run: captures genesis baselines.
-    Subsequent runs: verifies schema hasn't changed, updates last_verified_at.
+    Background: schema baselines for all active adapters (live API calls).
+    Does not block app startup / Render health checks.
     """
     root = _repo_root()
     print(f"[startup] REPO_ROOT: {root}")
@@ -278,6 +273,17 @@ async def capture_schema_baselines() -> None:
 
     print("[schema_monitor] Baseline capture complete.")
 
+
+@app.on_event("startup")
+async def capture_schema_baselines() -> None:
+    """
+    On startup: fire schema baseline capture in the background (non-blocking).
+    Signing pipeline runs here so startup stays fast for health checks.
+
+    First run: captures genesis baselines.
+    Subsequent runs: verifies schema hasn't changed, updates last_verified_at.
+    """
+    asyncio.create_task(_run_schema_baseline_capture())
     await _verify_signing_pipeline()
 
 
