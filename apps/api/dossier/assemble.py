@@ -37,6 +37,17 @@ def _extract_json_object(text: str) -> dict[str, Any]:
     return json.loads(text)
 
 
+def _coerce_unknowns_to_list(value: Any) -> list[str]:
+    """Sonnet sometimes returns unknowns as a dict; DossierSchema requires list[str]."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(x) for x in value]
+    if isinstance(value, dict):
+        return [f"{k}: {v}" for k, v in value.items()]
+    return [str(value)]
+
+
 async def _run_labeled(
     label: str,
     coro: Any,
@@ -96,6 +107,12 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
                     unknowns,
                 ),
                 _run_labeled(
+                    "fec_totals",
+                    fec.get_candidate_totals(entity.canonical_name),
+                    sources,
+                    unknowns,
+                ),
+                _run_labeled(
                     "opensecrets",
                     opensecrets.get_summary(entity.canonical_name),
                     sources,
@@ -138,6 +155,35 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
     for label, val in labeled:
         raw_bundle[label] = val
 
+    fec_totals = raw_bundle.get("fec_totals")
+    if fec_totals:
+        print(f"[dossier] fec_totals for {entity.canonical_name}: {fec_totals}")
+    else:
+        print(f"[dossier] fec_totals empty for {entity.canonical_name}")
+
+    if fec_totals and isinstance(fec_totals, dict) and fec_totals.get("candidate_id"):
+        sources[:] = [
+            s
+            for s in sources
+            if not (
+                s.get("id") == "fec_totals"
+                and s.get("status") == "ok"
+                and set(s.keys()) == {"id", "status"}
+            )
+        ]
+        sources.append(
+            {
+                "id": "fec_totals",
+                "status": "ok",
+                "candidate_id": fec_totals.get("candidate_id"),
+                "career_total_receipts": fec_totals.get(
+                    "career_total_receipts"
+                ),
+                "most_recent_cycle": fec_totals.get("most_recent_cycle"),
+                "fec_url": fec_totals.get("fec_url"),
+            }
+        )
+
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     sonnet_model = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-4-20250514")
     opus_model = os.environ.get("CLAUDE_OPUS_MODEL", "claude-opus-4-5")
@@ -163,6 +209,7 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
             )
             text = "".join(b.text for b in msg.content if getattr(b, "text", None))
             data = _extract_json_object(text)
+            data["unknowns"] = _coerce_unknowns_to_list(data.get("unknowns"))
             dossier = DossierSchema.model_validate(data)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Claude sonnet dossier structuring failed: %s", exc)
@@ -240,6 +287,19 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
     if key:
         try:
             client = anthropic.AsyncAnthropic(api_key=key)
+            opus_context_extra = ""
+            if fec_totals and isinstance(fec_totals, dict):
+                try:
+                    cr = float(fec_totals.get("career_total_receipts") or 0)
+                except (TypeError, ValueError):
+                    cr = 0.0
+                if cr > 0:
+                    opus_context_extra = (
+                        f"\n\nFEC career total receipts: ${cr:,.0f} "
+                        f"over {fec_totals.get('cycles_found')} election cycles. "
+                        f"Most recent cycle: {fec_totals.get('most_recent_cycle')}. "
+                        f"FEC profile: {fec_totals.get('fec_url')}"
+                    )
             msg2 = await client.messages.create(
                 model=opus_model,
                 max_tokens=4096,
@@ -250,6 +310,7 @@ async def assemble_dossier(frame_id: str, entity: ResolvedEntity) -> DossierSche
                         "content": "Write only the field narrative_summary: chronological, complete, "
                         "no omissions, no adjectives unless measurements. Respond with a JSON object "
                         "with a single key narrative_summary.\n\n"
+                        + opus_context_extra
                         + dossier.model_dump_json(),
                     }
                 ],

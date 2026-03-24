@@ -1,27 +1,262 @@
 {
   "source_id": "fec",
-  "captured_at": "2026-03-23T13:18:32.486256+00:00",
-  "endpoint_description": "FEC baseline capture failed at startup",
+  "captured_at": "2026-03-24T00:11:32.176432+00:00",
+  "endpoint_description": "FEC /v1/candidates/ \u2014 candidate lookup by ID",
   "schema_monitor_version": "schema_monitor_v1",
-  "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
-  "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "field_count": 2,
-  "critical_field_count": 0,
+  "full_schema_hash": "2527fea1f0e17347cad0a0bc7f1cfd8381e60a43e9f19307f74283dfc036f6a6",
+  "critical_fields_hash": "4b4dfc0d22f9454fe5d01dd81b64df08e41f5dbc36f28bc1fb981b06c450db66",
+  "field_count": 32,
+  "critical_field_count": 9,
   "schema_tuples": [
     {
-      "path": "error",
+      "path": "api_version",
       "node_type": "scalar",
       "scalar_type": "string",
       "cardinality": "single"
     },
     {
-      "path": "note",
+      "path": "pagination",
+      "node_type": "object",
+      "scalar_type": null,
+      "cardinality": "single"
+    },
+    {
+      "path": "pagination.count",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "pagination.is_count_exact",
+      "node_type": "scalar",
+      "scalar_type": "boolean",
+      "cardinality": "single"
+    },
+    {
+      "path": "pagination.page",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "pagination.pages",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "pagination.per_page",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[]",
+      "node_type": "array",
+      "scalar_type": null,
+      "cardinality": "repeated"
+    },
+    {
+      "path": "results[].active_through",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].candidate_id",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].candidate_inactive",
+      "node_type": "scalar",
+      "scalar_type": "boolean",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].candidate_status",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].cycles[]",
+      "node_type": "array",
+      "scalar_type": null,
+      "cardinality": "repeated"
+    },
+    {
+      "path": "results[].district",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].district_number",
+      "node_type": "scalar",
+      "scalar_type": "integer",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].election_districts[]",
+      "node_type": "array",
+      "scalar_type": null,
+      "cardinality": "repeated"
+    },
+    {
+      "path": "results[].election_years[]",
+      "node_type": "array",
+      "scalar_type": null,
+      "cardinality": "repeated"
+    },
+    {
+      "path": "results[].federal_funds_flag",
+      "node_type": "scalar",
+      "scalar_type": "boolean",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].first_file_date",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].has_raised_funds",
+      "node_type": "scalar",
+      "scalar_type": "boolean",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].inactive_election_years",
+      "node_type": "scalar",
+      "scalar_type": "null",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].incumbent_challenge",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].incumbent_challenge_full",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].last_f2_date",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].last_file_date",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].load_date",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].name",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].office",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].office_full",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].party",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].party_full",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].state",
       "node_type": "scalar",
       "scalar_type": "string",
       "cardinality": "single"
     }
   ],
-  "critical_tuples": [],
+  "critical_tuples": [
+    {
+      "path": "results[].candidate_id",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].election_years[]",
+      "node_type": "array",
+      "scalar_type": null,
+      "cardinality": "repeated"
+    },
+    {
+      "path": "results[].inactive_election_years",
+      "node_type": "scalar",
+      "scalar_type": "null",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].name",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].office",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].office_full",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].party",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].party_full",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    },
+    {
+      "path": "results[].state",
+      "node_type": "scalar",
+      "scalar_type": "string",
+      "cardinality": "single"
+    }
+  ],
   "is_genesis": true,
   "version_history": [
     {
@@ -48,11 +283,16 @@
       "captured_at": "2026-03-23T12:42:03.264496+00:00",
       "full_schema_hash": "2527fea1f0e17347cad0a0bc7f1cfd8381e60a43e9f19307f74283dfc036f6a6",
       "critical_fields_hash": "4b4dfc0d22f9454fe5d01dd81b64df08e41f5dbc36f28bc1fb981b06c450db66"
+    },
+    {
+      "captured_at": "2026-03-23T13:18:32.486256+00:00",
+      "full_schema_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
+      "critical_fields_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
-  "version_history_count": 5,
-  "last_verified_at": "2026-03-23T23:34:35.181705+00:00",
-  "previous_full_hash": "2527fea1f0e17347cad0a0bc7f1cfd8381e60a43e9f19307f74283dfc036f6a6",
+  "version_history_count": 6,
+  "last_verified_at": "2026-03-24T00:28:44.805325+00:00",
+  "previous_full_hash": "0b4a79988a8a52600a13d17170aa0b89992ee7827a89bf1ed4ed391de8f286b9",
   "schema_changed": true,
-  "change_detected_at": "2026-03-23T13:18:32.486256+00:00"
+  "change_detected_at": "2026-03-24T00:11:32.176432+00:00"
 }

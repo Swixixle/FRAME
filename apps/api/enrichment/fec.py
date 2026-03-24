@@ -47,6 +47,32 @@ def normalize_entity_name(name: str) -> str:
     return s
 
 
+def _score_candidate(c: dict[str, Any], name_query: str) -> int:
+    score = 0
+    office = str(c.get("office") or "").upper()
+    # Prefer Senate over House over Presidential
+    if office == "S":
+        score += 30
+    elif office == "H":
+        score += 10
+    elif office == "P":
+        score += 0
+    # Prefer closer name match
+    cname = str(c.get("name") or "").lower()
+    query_lower = name_query.lower()
+    # Check if all words in query appear in candidate name
+    query_words = query_lower.split()
+    if all(w in cname for w in query_words):
+        score += 20
+    # Prefer more recent activity
+    active_through = c.get("active_through") or 0
+    try:
+        score += min(int(str(active_through)[:4]), 2030) - 2000
+    except (ValueError, TypeError):
+        pass
+    return score
+
+
 async def _http_get_json(url: str, params: dict[str, Any]) -> dict[str, Any]:
     delays = [1.0, 2.0, 4.0]
     last_exc: Exception | None = None
@@ -159,7 +185,9 @@ async def get_candidate(entity_name: str) -> dict[str, Any] | None:
         results = data.get("results") or []
         if not results:
             return None
-        c = results[0]
+        scored = [(c, _score_candidate(c, entity_name)) for c in results]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        c = scored[0][0]
         return {
             "candidate_id": c.get("candidate_id"),
             "party": c.get("party"),
@@ -173,6 +201,69 @@ async def get_candidate(entity_name: str) -> dict[str, Any] | None:
         TTL_FEC,
         factory,
     )
+    if raw is None or not isinstance(raw, dict):
+        return None
+    return raw
+
+
+async def get_candidate_totals(entity_name: str) -> dict[str, Any] | None:
+    """
+    Get career fundraising totals for a candidate.
+    First finds candidate_id via get_candidate, then
+    queries /candidates/totals/ with candidate_id for financial summary.
+    This is the correct way to get "how much has Rand Paul raised"
+    rather than schedule_a which shows donations they made to others.
+    """
+    candidate = await get_candidate(entity_name)
+    if not candidate or not candidate.get("candidate_id"):
+        return None
+
+    candidate_id = candidate["candidate_id"]
+
+    async def factory() -> dict[str, Any] | None:
+        params = {
+            "api_key": _fec_key(),
+            "candidate_id": candidate_id,
+            "per_page": 10,
+        }
+        data = await _http_get_json(
+            f"{FEC_BASE}candidates/totals/",
+            params,
+        )
+        results = data.get("results") or []
+        if not results:
+            return None
+        results.sort(key=lambda r: int(r.get("cycle") or 0), reverse=True)
+        most_recent = results[0]
+
+        # Sum across all cycles for career total
+        career_receipts = sum(
+            float(r.get("receipts") or 0) for r in results
+        )
+        career_disbursements = sum(
+            float(r.get("disbursements") or 0) for r in results
+        )
+
+        return {
+            "candidate_id": candidate_id,
+            "candidate_name": candidate.get("name", entity_name),
+            "party": candidate.get("party"),
+            "state": candidate.get("state"),
+            "office": candidate.get("office"),
+            "career_total_receipts": career_receipts,
+            "career_total_disbursements": career_disbursements,
+            "most_recent_cycle": most_recent.get("cycle"),
+            "most_recent_receipts": float(
+                most_recent.get("receipts") or 0
+            ),
+            "cycles_found": len(results),
+            "fec_url": (
+                f"https://www.fec.gov/data/candidate/{candidate_id}/"
+            ),
+        }
+
+    cache_key = f"fec:totals:{normalize_entity_name(entity_name)}"
+    raw = await cached_fetch(cache_key, TTL_FEC, factory)
     if raw is None or not isinstance(raw, dict):
         return None
     return raw
