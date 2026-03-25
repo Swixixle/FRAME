@@ -930,11 +930,21 @@ const CAP_PHRASE_REJECT_FIRST = new Set([
   "that",
 ]);
 
+/** Lowercase stems that keep a trailing period (St., Dr., …). */
+const TOKEN_DOT_ABBREVS = new Set(["st", "dr", "mr", "ms", "jr", "sr", "vs", "ft"]);
+
 function normalizeWordToken(raw: string): string {
-  return raw
+  let t = raw
     .replace(/^[\[\(""„«'`]+|[\]\)""»'`,;:]+$/g, "")
     .replace(/^[¿¡]+/, "")
     .trim();
+  if (/^[A-Z][a-z]+\.$/.test(t)) {
+    const stem = t.slice(0, -1);
+    if (!TOKEN_DOT_ABBREVS.has(stem.toLowerCase())) {
+      t = stem;
+    }
+  }
+  return t;
 }
 
 /**
@@ -957,6 +967,139 @@ function phraseMeetsConfidence(phrase: string): boolean {
   const first = phrase.split(/\s+/)[0]?.toLowerCase() ?? "";
   if (CAP_PHRASE_REJECT_FIRST.has(first)) return false;
   return true;
+}
+
+/** Token sequence aligned with Layer 4 extractors (for dedup / sub-phrase checks). */
+function phraseTokensForDedup(phrase: string): string[] {
+  return phrase
+    .trim()
+    .split(/\s+/)
+    .map((t) => normalizeWordToken(t))
+    .filter(Boolean);
+}
+
+function tokenArraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((t, i) => t === b[i]);
+}
+
+function isContiguousSubarrayOf(needle: string[], hay: string[]): boolean {
+  if (needle.length === 0 || needle.length > hay.length) return false;
+  for (let i = 0; i <= hay.length - needle.length; i++) {
+    let ok = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (hay[i + j] !== needle[j]) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * Longest phrase wins: drop standalone tokens covered by a kept multi-word phrase;
+ * drop shorter phrases that are contiguous sub-runs of a longer kept phrase.
+ */
+function applyPhrasePriorityGlobally(candidates: string[]): string[] {
+  const uniq = [...new Set(candidates.map((c) => c.trim()).filter(Boolean))];
+  if (uniq.length === 0) return [];
+  const sorted = [...uniq].sort((a, b) => {
+    const ta = phraseTokensForDedup(a);
+    const tb = phraseTokensForDedup(b);
+    if (tb.length !== ta.length) return tb.length - ta.length;
+    if (b.length !== a.length) return b.length - a.length;
+    return a.localeCompare(b);
+  });
+  const kept: string[] = [];
+  for (const c of sorted) {
+    const tc = phraseTokensForDedup(c);
+    if (tc.length === 0) continue;
+    let redundant = false;
+    for (const k of kept) {
+      const tk = phraseTokensForDedup(k);
+      if (tk.length === 0) continue;
+      if (tokenArraysEqual(tc, tk)) {
+        redundant = true;
+        break;
+      }
+      if (tk.length >= 2 && tc.length === 1 && tk.includes(tc[0]!)) {
+        redundant = true;
+        break;
+      }
+      if (tc.length < tk.length && isContiguousSubarrayOf(tc, tk)) {
+        redundant = true;
+        break;
+      }
+    }
+    if (!redundant) kept.push(c);
+  }
+  return kept.sort((a, b) => a.localeCompare(b));
+}
+
+function candidateTokenCount(name: string): number {
+  return phraseTokensForDedup(name).length;
+}
+
+function countInsensitiveOccurrences(haystack: string, needle: string): number {
+  const nd = needle.trim();
+  if (!nd) return 0;
+  const hl = haystack.toLowerCase();
+  const low = nd.toLowerCase();
+  let n = 0;
+  let pos = 0;
+  while (pos <= hl.length) {
+    const i = hl.indexOf(low, pos);
+    if (i < 0) break;
+    n++;
+    pos = i + Math.max(1, low.length);
+  }
+  return n;
+}
+
+const YEAR_RE = /\b(1[0-9]{3}|20[0-9]{2})\b/;
+const NARRATIVE_ANCHOR_RE =
+  /\b(sighted|founded|died|created|built|reported)\b/i;
+
+function hasProperNounProfile(name: string): boolean {
+  const parts = phraseTokensForDedup(name);
+  return parts.some((t) => isCapitalizedNameToken(t));
+}
+
+/** Relevance for gating the full dynamic stack (Wikidata / Wikipedia / web); ledger path ignores this. */
+export function candidateRelevanceScore(name: string, narrative: string): number {
+  const raw = narrative.trim();
+  if (!raw || !name.trim()) return 0;
+  let score = 0;
+  if (countInsensitiveOccurrences(raw, name) >= 2) score += 2;
+  if (hasProperNounProfile(name)) score += 1;
+  const idx = raw.toLowerCase().indexOf(name.trim().toLowerCase());
+  if (idx >= 0) {
+    const lo = Math.max(0, idx - 80);
+    const hi = Math.min(raw.length, idx + name.length + 80);
+    const window = raw.slice(lo, hi);
+    if (YEAR_RE.test(window)) score += 2;
+    if (NARRATIVE_ANCHOR_RE.test(window)) score += 2;
+  }
+  return score;
+}
+
+/**
+ * Candidates that receive archives + Wikidata / Wikipedia / web (not ledger-only, not single-token non-ledger).
+ * Uses merged list, phrase priority, score ≥ 2. For diagnostics / tests.
+ */
+export function listDynamicLookupStackCandidates(narrative: string): string[] {
+  const raw = narrative.trim();
+  if (!raw) return [];
+  const out: string[] = [];
+  for (const name of mergeCandidates(raw)) {
+    if (tryResolveActorCandidate(name)) continue;
+    if (candidateTokenCount(name) < 2) continue;
+    if (candidateRelevanceScore(name, raw) < 2) continue;
+    out.push(name);
+  }
+  return out.sort((a, b) => a.localeCompare(b));
 }
 
 /**
@@ -1002,7 +1145,7 @@ function mergeCandidates(text: string): string[] {
   for (const x of capitalizedPhraseExtractor(text)) {
     if (x.trim()) set.add(x.trim());
   }
-  return [...set].sort((a, b) => a.localeCompare(b));
+  return applyPhrasePriorityGlobally([...set]);
 }
 
 /** Capitalized 1–4 word phrases only (Layer 4 helper); exported for tests. */
@@ -1010,7 +1153,7 @@ export function extractCapitalizedPhraseCandidates(text: string): string[] {
   return capitalizedPhraseExtractor(text);
 }
 
-/** Full Layer 4 candidate merge (tests / diagnostics). */
+/** Full Layer 4 candidate merge after global phrase priority (tests / diagnostics). */
 export function mergeLayer4Candidates(text: string): string[] {
   return mergeCandidates(text);
 }
@@ -1062,25 +1205,40 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
   };
 
   for (const name of candidates) {
-    const stack = await runArchiveAndCommunityStack(name);
-    addChecks(stack.checks);
     const ledgerRec = tryResolveActorCandidate(name);
+    const nTok = candidateTokenCount(name);
+
     if (ledgerRec) {
+      const stack = await runArchiveAndCommunityStack(name);
+      addChecks(stack.checks);
       const rec = mergeExternalStacks(ledgerRec, stack);
       if (!foundBySlug.has(rec.slug)) {
         foundBySlug.set(rec.slug, rec);
       }
-    } else {
-      const { record, resolverChecks } = await resolveDynamicWithStack(name, stack);
-      addChecks(resolverChecks);
-      if (record) {
-        dynamic_lookups++;
-        if (!foundBySlug.has(record.slug)) {
-          foundBySlug.set(record.slug, record);
-        }
-      } else {
-        actors_absent.push({ name, absent: true, wikidata_attempted: true });
+      continue;
+    }
+
+    if (nTok < 2) {
+      actors_absent.push({ name, absent: true, wikidata_attempted: false });
+      continue;
+    }
+
+    if (candidateRelevanceScore(name, raw) < 2) {
+      actors_absent.push({ name, absent: true, wikidata_attempted: false });
+      continue;
+    }
+
+    const stack = await runArchiveAndCommunityStack(name);
+    addChecks(stack.checks);
+    const { record, resolverChecks } = await resolveDynamicWithStack(name, stack);
+    addChecks(resolverChecks);
+    if (record) {
+      dynamic_lookups++;
+      if (!foundBySlug.has(record.slug)) {
+        foundBySlug.set(record.slug, record);
       }
+    } else {
+      actors_absent.push({ name, absent: true, wikidata_attempted: true });
     }
   }
 

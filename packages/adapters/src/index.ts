@@ -7,6 +7,8 @@ export {
   getActorLayer,
   extractCapitalizedPhraseCandidates,
   mergeLayer4Candidates,
+  candidateRelevanceScore,
+  listDynamicLookupStackCandidates,
 } from "./actor.js";
 export { getPatternDepthLayer, getPatternLayer } from "./pattern.js";
 export { getJurisdictionLayer } from "./jurisdiction.js";
