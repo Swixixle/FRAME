@@ -145,5 +145,96 @@
         "confidence_tier": "cross_corroborated"
       }
     ]
+  },
+  "kenneth-arnold": {
+    "name": "Kenneth Arnold UFO sighting",
+    "aliases": ["Mount Rainier sighting 1947", "Flying saucers (coinage)", "Kenneth Arnold"],
+    "events": [
+      {
+        "date": "1947-06-24",
+        "type": "first_recorded_instance",
+        "description": "Private pilot Kenneth Arnold reports nine crescent-shaped objects near Mount Rainier, Washington; wire services and national press coverage popularized the term flying saucers for disc-like craft",
+        "source": "Associated Press and contemporaneous U.S. press — June 1947",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "roswell-mac-brazel": {
+    "name": "Mac Brazel",
+    "aliases": ["William Ware Brazel", "Roswell rancher debris"],
+    "events": [
+      {
+        "date": "1947-07-01",
+        "type": "first_recorded_instance",
+        "description": "Rancher Mac Brazel reports debris on his property near Roswell, New Mexico; material reported to local sheriff and Army Air Forces; chain leads to Roswell Army Air Field press release and rapid retraction",
+        "source": "Roswell Daily Record — July 8, 1947; public statement record",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "betty-barney-hill": {
+    "name": "Betty and Barney Hill",
+    "aliases": ["Barney Hill", "Betty Hill", "Interrupted Journey case"],
+    "events": [
+      {
+        "date": "1961-09-20",
+        "type": "first_recorded_instance",
+        "description": "New Hampshire couple reports a puzzling road encounter and missing time; later hypnotic regression sessions (documented from 1964) produce elaborated abduction narrative that becomes the first widely publicized alien abduction account in U.S. mass media",
+        "source": "John Fuller — The Interrupted Journey (1966); contemporaneous coverage of book and lectures",
+        "confidence_tier": "single_source"
+      }
+    ]
+  },
+  "peter-plogojowitz": {
+    "name": "Peter Plogojowitz",
+    "aliases": ["Petar Blagojević", "Kisiljevo vampire", "Plogojowitz vampire"],
+    "events": [
+      {
+        "date": "1725-01-01",
+        "type": "first_recorded_instance",
+        "description": "Habsburg-era investigation of alleged vampire revenant Peter Plogojowitz in Kisiljevo (Serbian territory under Austrian administration); imperial authorities document exhumation inquiry among earliest formal European vampire dossiers",
+        "source": "Austrian Imperial Court / military administrative report — 1725",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "mercy-brown": {
+    "name": "Mercy Brown",
+    "aliases": ["Mercy Lena Brown", "Exeter vampire", "Rhode Island vampire exhumation"],
+    "events": [
+      {
+        "date": "1892-03-19",
+        "type": "first_recorded_instance",
+        "description": "Family and community in Exeter, Rhode Island exhume Mercy Brown’s body; heart removed and burned per folk remedial practice against alleged consumptive vampire; reported in Providence press",
+        "source": "Providence Journal — March 19, 1892",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "quetzalcoatl": {
+    "name": "Quetzalcoatl",
+    "aliases": ["Feathered Serpent", "Quetzalcōātl", "Ce Acatl Topiltzin"],
+    "events": [
+      {
+        "date": "0900-01-01",
+        "type": "first_recorded_instance",
+        "description": "Feathered-serpent deity and cultural complex attested from Classic-period Mesoamerican iconography (e.g. Teotihuacan, c. 900 CE onward in scholarly dating); later Aztec state cult and textual sources; Toltec ruler Ce Acatl Topiltzin syncretized with the deity in post-Classic narrative",
+        "source": "Pre-Columbian codices, inscriptions, and archaeological publication record",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "anansi": {
+    "name": "Anansi",
+    "aliases": ["Ananse", "Kwaku Ananse", "Spider trickster (Akan)"],
+    "events": [
+      {
+        "date": "1923-01-01",
+        "type": "first_recorded_instance",
+        "description": "Akan (Ashanti) spider-trickster figure documented in published ethnographic collection; oral narrative corpus predates Rattray’s compilation and spread with diaspora into Caribbean and African-American story traditions",
+        "source": "R.S. Rattray — Ashanti (1923); anthropological and folklore secondary literature",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
   }
 }

@@ -171,5 +171,135 @@
     "absent_fields": ["arrest_and_trial_record_identifying_one_offender", "forensic_corroboration_of_supernatural_leaps"],
     "source_type": "text",
     "ledger_slug": "spring-heeled-jack"
+  },
+  "kenneth-arnold": {
+    "what": "The Kenneth Arnold sighting (June 1947) is a documented aerial observation near Mount Rainier, Washington; national press syndication helped fix flying saucer as a popular label for disc-shaped UFO reports in the postwar United States.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Kenneth Arnold (private pilot, complainant in press record)", "confidence_tier": "official_secondary" },
+      { "name": "Associated Press and U.S. daily press (June 1947)", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "24 June 1947 — observation reported; contemporaneous wire and newspaper record",
+      "source": "Associated Press; regional and national U.S. newspapers",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["instrumental_radar_chain_for_this_specific_track_public_release", "single_material_sample_tied_to_observation"],
+    "source_type": "text",
+    "ledger_slug": "kenneth-arnold"
+  },
+  "roswell-mac-brazel": {
+    "what": "Mac Brazel (William W. Brazel) is the rancher named in public record as having recovered unusual debris near Roswell, New Mexico in July 1947, leading to sheriff and military involvement that produced the brief flying-disc press statement and its withdrawal.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Mac Brazel (rancher)", "confidence_tier": "official_secondary" },
+      { "name": "Chaves County sheriff’s office (handoff in public narrative)", "confidence_tier": "official_secondary" },
+      { "name": "Roswell Army Air Field (press release chain)", "confidence_tier": "official_primary" }
+    ],
+    "when": {
+      "earliest_appearance": "Early July 1947 — debris recovery; July 8, 1947 — Roswell Daily Record article",
+      "source": "Roswell Daily Record — July 8, 1947; contemporaneous press",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["public_chain_of_custody_for_all_field_debris_samples", "single_agency_narrative_uncontested_since_1947"],
+    "source_type": "text",
+    "ledger_slug": "roswell-mac-brazel"
+  },
+  "betty-barney-hill": {
+    "what": "Betty and Barney Hill are the New Hampshire couple whose 1961 road encounter and later hypnotic regression interviews became the template for the modern alien abduction narrative in English-language popular culture, largely through John Fuller’s The Interrupted Journey (1966).",
+    "what_confidence_tier": "single_source",
+    "who": [
+      { "name": "Betty Hill", "confidence_tier": "single_source" },
+      { "name": "Barney Hill", "confidence_tier": "single_source" },
+      { "name": "John Fuller (author, The Interrupted Journey, 1966)", "confidence_tier": "single_source" }
+    ],
+    "when": {
+      "earliest_appearance": "September 1961 — reported encounter; documented hypnotic sessions from 1964 in published account",
+      "source": "Fuller — The Interrupted Journey (1966); derivative media",
+      "confidence_tier": "single_source"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["independent_corroborating_witness_of_full_abduction_sequence", "physical_evidence_meeting_criminal_forensic_standard"],
+    "source_type": "text",
+    "ledger_slug": "betty-barney-hill"
+  },
+  "peter-plogojowitz": {
+    "what": "Peter Plogojowitz (Petar Blagojević) names a documented 1725 Austrian administrative investigation of alleged vampire activity in Kisiljevo; the file stands among the earliest formal European bureaucratic responses to vampire panic.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Habsburg imperial administration (1725 inquiry)", "confidence_tier": "official_primary" },
+      { "name": "Kisiljevo locale (Serbian village under Austrian administration)", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "1725 — imperial report and administrative action on record",
+      "source": "Austrian Imperial Court / military administrative documentation",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["modern_forensic_exhumation_report_public", "uniform_spelling_of_name_across_all_period_copyists"],
+    "source_type": "text",
+    "ledger_slug": "peter-plogojowitz"
+  },
+  "mercy-brown": {
+    "what": "Mercy Brown was a young woman who died of consumption in Exeter, Rhode Island; in 1892 townspeople exhumed her corpse, burned her heart, and fed ashes to a surviving relative per local belief that she drained the family — the last widely cited New England vampire exhumation.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Mercy Lena Brown (decedent)", "confidence_tier": "official_secondary" },
+      { "name": "Providence Journal (March 1892 reporting)", "confidence_tier": "official_secondary" },
+      { "name": "Exeter, Rhode Island community", "confidence_tier": "single_source" }
+    ],
+    "when": {
+      "earliest_appearance": "March 1892 — exhumation and heart burning; March 19, 1892 — Providence Journal article",
+      "source": "Providence Journal — March 19, 1892",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["clinical_proof_of_postmortem_animation", "uniform_national_legal_response_to_practice"],
+    "source_type": "text",
+    "ledger_slug": "mercy-brown"
+  },
+  "quetzalcoatl": {
+    "what": "Quetzalcoatl is the feathered-serpent deity and priestly-kingship complex central to Mesoamerican religion from Teotihuacan and Classic Maya through Aztec state theology; narrative layers later braid the god with the legendary Toltec ruler Ce Acatl Topiltzin.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Teotihuacan and Classic Mesoamerican polities (iconographic record)", "confidence_tier": "official_primary" },
+      { "name": "Aztec triple alliance textual and ritual record", "confidence_tier": "official_primary" },
+      { "name": "Ce Acatl Topiltzin (Toltec ruler figure, syncretic tradition)", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "Circa 900 CE onward — feathered-serpent iconography at Teotihuacan in archaeological dating; Postclassic codices for Aztec layer",
+      "source": "Archaeology; Museo Nacional de Antropología publications; scholarly codex editions",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_literal_biography_separable_from_all_mythic_layer_in_inscription", "unified_calendar_anchor_for_every_local_cult_variant"],
+    "source_type": "text",
+    "ledger_slug": "quetzalcoatl"
+  },
+  "anansi": {
+    "what": "Anansi is the Akan spider-trickster of West African oral literature, attested in published Ashanti collections and re-performed across the Caribbean and Americas after the trans slave trade; tales are pedagogical and comic, not a single authored text.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Ashanti / Akan narrative communities", "confidence_tier": "official_secondary" },
+      { "name": "R.S. Rattray (ethnographer, Ashanti 1923)", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "Oral corpus predates systematic publication; 1923 — Rattray Ashanti monograph documents spider-trickster cycle for international scholarship",
+      "source": "R.S. Rattray — Ashanti (1923); Caribbean folklore anthologies",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_ur_manuscript_for_all_anansi_tales", "authorial_attribution_for_oral_variants"],
+    "source_type": "text",
+    "ledger_slug": "anansi"
   }
 }
