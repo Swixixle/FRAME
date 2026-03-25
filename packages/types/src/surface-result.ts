@@ -26,11 +26,17 @@ export interface SurfaceMediaClaim {
 }
 
 /**
- * Layer 1 (Surface) extraction — structured only; no free-form assistant prose outside `what`.
+ * Layer 1 (Surface) extraction — structured fields only; narrative body in `what`,
+ * contextual framing in `cultural_substrate` (not a separate claim block).
  */
 export interface SurfaceResult {
   what: string;
   what_confidence_tier: ConfidenceTier;
+  /**
+   * Broader cultural or historical framing for the narrative (not a factual claim line).
+   * Null when no defensible context can be stated.
+   */
+  cultural_substrate: string | null;
   who: SurfaceNamedActor[];
   when: SurfaceWhenBlock;
   /** Present when the request used a URL input; otherwise null. */
@@ -38,8 +44,8 @@ export interface SurfaceResult {
   /** Tier for URL resolution/identity; null when `source_url` is null. */
   source_url_confidence_tier: ConfidenceTier | null;
   /**
-   * Keys among: what, who, when, source_url — that could not be populated from the input.
-   * Always present; empty only when every field was populated (fully traced surface).
+   * Keys among: what, who, when, source_url — that could not be inferred at all from the input.
+   * Do not list a field merely because confidence is low. Always present; empty when all four were inferred.
    */
   absent_fields: string[];
   /** Provenance of extraction: plain text, fetched HTML, or media/podcast pipeline. */

@@ -150,6 +150,9 @@ function SurfaceTraceFields({ trace, ledgerPresence }) {
   return (
     <>
       <p className="depth-what">{trace.what}</p>
+      {trace.cultural_substrate ? (
+        <p className="depth-cultural-substrate">{trace.cultural_substrate}</p>
+      ) : null}
       <div className="depth-meta-row">
         <TierBadge tier={trace.what_confidence_tier} />
       </div>

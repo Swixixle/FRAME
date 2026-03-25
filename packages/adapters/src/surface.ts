@@ -142,19 +142,24 @@ export async function getSurfaceLayer(input: {
     : `- source_url: null
 - source_url_confidence_tier: null`;
 
-  const prompt = `You are a neutral forensic auditor. The input is source text (possibly from a web page). Extract Layer 1 (Surface) facts only — no verdict, no moral judgment, no spin.
+  const prompt = `You are a neutral forensic auditor. The input is source text (possibly from a fetched web page). Produce Layer 1 (Surface) structured extraction only: factual description of the material, no verdict, no moral judgment, no spin.
 
-Return a single JSON object with EXACTLY these keys (no markdown, no prose outside JSON):
-- what: string — one paragraph plain-language description of the main claim or subject matter.
+Return a single JSON object with EXACTLY these keys (no markdown, no keys other than those listed, no prose outside JSON):
+- what: string — one concise paragraph describing the main subject matter, claim, or event(s) the text invokes, with maximum specificity when proper names appear.
+- cultural_substrate: string or null — exactly one sentence situating the narrative in broader cultural or historical context (e.g. regional folklore, documented incident, literary tradition). Framing only; not a separate factual claim block. Use null only when no defensible context can be stated without guessing.
 - what_confidence_tier: string — one of: ${tierList}
-- who: array of objects, each { "name": string, "confidence_tier": string } — named actors (people, organizations, forums) mentioned; use empty array if none.
-- when: object { "earliest_appearance": string, "source": string, "confidence_tier": string } — earliest datable appearance described; if unknown, use best-effort strings and list "when" in absent_fields.
+  Use cross_corroborated when the substance is a well-documented historical or widely attested cultural fact in public record or scholarship.
+  Use single_source when the substance rests on one tradition, one outlet, or folklore with limited independent documentation.
+  Use structural_heuristic only when the subject matter is genuinely ambiguous or underspecified from the text alone.
+- who: array of { "name": string, "confidence_tier": string } — include EVERY named or clearly implied entity relevant to the text: people, places (cities, regions, landmarks), organizations, creatures or figure names. Disambiguate with short parentheticals when needed (e.g. city, state). Use tier per-entity: same tier vocabulary as ${tierList}. Use [] only if no entities apply.
+- when: object { "earliest_appearance": string, "source": string, "confidence_tier": string }. If the input states or implies a year or date, anchor earliest_appearance on that evidence and reflect it explicitly in the string. Otherwise best-effort from the text; tier appropriately.
 ${urlInstructions}
-- absent_fields: array of strings — each must be one of: "what", "who", "when", "source_url" — listing which of those logical fields could not be populated from the input. Use [] only if all four were populated. Never omit absent_fields.
+- absent_fields: array — each entry exactly one of: "what", "who", "when", "source_url". List a key ONLY if that logical field truly cannot be inferred even with reasonable expansion from the words given (including minimal short inputs). NEVER list a field merely because confidence is low, and NEVER list a field that you populated with non-empty content. Prefer dense inference for short inputs over leaving fields absent. Never omit absent_fields (use [] if nothing is absent).
 
 Rules:
-- confidence_tier values must be exactly from the list above.
-- If the text does not support a field, still return the key with empty or best-effort content AND include the field name in absent_fields.
+- All confidence_tier values must be exactly strings from: ${tierList}.
+- For brief inputs, still extract concrete entities and dates if they appear; use cultural_substrate to carry general context.
+- Do not add moral adjectives or intent claims; stay descriptive.
 
 Source text:
 ---
@@ -237,12 +242,22 @@ ${narrativeBody}
   const what = typeof parsed.what === "string" ? parsed.what : "";
   if (!what.trim() && !absent_fields.includes("what")) absent_fields.push("what");
 
+  const rawSubstrate = parsed.cultural_substrate;
+  let cultural_substrate: string | null = null;
+  if (rawSubstrate === null || rawSubstrate === undefined) {
+    cultural_substrate = null;
+  } else if (typeof rawSubstrate === "string") {
+    const t = rawSubstrate.trim();
+    cultural_substrate = t.length > 0 ? t : null;
+  }
+
   const modelUrlTier = sourceUrl
     ? asTier(parsed.source_url_confidence_tier, sourceUrlTier ?? ConfidenceTier.SingleSource)
     : null;
 
   const result: SurfaceResult = {
     what,
+    cultural_substrate,
     what_confidence_tier: asTier(parsed.what_confidence_tier, ConfidenceTier.SingleSource),
     who,
     when,

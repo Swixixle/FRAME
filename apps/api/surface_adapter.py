@@ -46,6 +46,10 @@ SLENDERMAN_SURFACE_BASELINE: dict[str, Any] = {
     },
     "source_url": None,
     "source_url_confidence_tier": None,
+    "cultural_substrate": (
+        "Late 2000s participatory web culture and Photoshop-driven horror "
+        "memes on large forums, before the character spread into wider fiction."
+    ),
     "absent_fields": [],
     "source_type": "text",
 }
@@ -185,6 +189,7 @@ def map_podcast_to_surface(pod: dict[str, Any], source_url: str) -> dict[str, An
 
     return {
         "what": what,
+        "cultural_substrate": None,
         "what_confidence_tier": "single_source",
         "who": who,
         "when": when,
