@@ -29,7 +29,7 @@
       ],
       "min_hits": 2
     },
-    "signed_at": "2026-03-25T05:25:42.299Z",
+    "signed_at": "2026-03-25T06:56:26.232Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -61,7 +61,7 @@
       ],
       "min_hits": 3
     },
-    "signed_at": "2026-03-25T05:25:42.300Z",
+    "signed_at": "2026-03-25T06:56:26.233Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -92,7 +92,7 @@
       "min_hits": 2
     },
     "signature": "292ec4a70997dd64b757dca3d611121dacccf0c321ffdf7aeb893f71accaf610a4622d05633e8236a0f88d5eee1b9dfa4316c78c1761dd56213a699cb683e902",
-    "signed_at": "2026-03-25T05:25:42.301Z",
+    "signed_at": "2026-03-25T06:56:26.234Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -124,7 +124,7 @@
       "min_hits": 2
     },
     "signature": "b9ac70eb967a5a3cf86edfed6c2ee9d09ae76820cbcca16f69da38dd66273e21356cc209c90d0e085584fde24e5f4b7a5d3e93b191acb236a472ffb163e7d606",
-    "signed_at": "2026-03-25T05:25:42.301Z",
+    "signed_at": "2026-03-25T06:56:26.234Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -153,7 +153,87 @@
       "min_hits": 2
     },
     "signature": "ec38db5944287cbb38093814ec64ff847d4c570c933038e9a6b211f0086726c092db651ad1fd2a0b2e4b0ced1bd28109613d7bcf53b44ab56fc9d079e09e4b08",
-    "signed_at": "2026-03-25T05:25:42.301Z",
+    "signed_at": "2026-03-25T06:56:26.235Z",
+    "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
+  },
+  {
+    "id": "regional-legend-mutation-v1",
+    "label": "Regional legend mutation",
+    "summary": "A localized legend that maintains core structure (mirror ritual, vanishing figure, haunted location) while acquiring local names, dates, and details as it spreads geographically. No time window — accumulation based. Historical analog: Vanishing Hitchhiker documented in Jan Harold Brunvand's \"The Vanishing Hitchhiker\" (1981).",
+    "constraints": {
+      "accumulation_based": true,
+      "time_window_hours": null,
+      "core_structures": [
+        "mirror ritual",
+        "vanishing figure",
+        "haunted location"
+      ]
+    },
+    "literary_analog": "Brunvand — The Vanishing Hitchhiker (1981)",
+    "detection": {
+      "keywords": [
+        "mirror",
+        "mirrors",
+        "ritual",
+        "rituals",
+        "documented",
+        "variant",
+        "variants",
+        "folklore",
+        "legend",
+        "localized",
+        "geographic",
+        "spread",
+        "mutation",
+        "divination",
+        "chant",
+        "chanted",
+        "regional",
+        "vanishing",
+        "brunvand",
+        "schoolyard",
+        "cemetery",
+        "ghost",
+        "haunted"
+      ],
+      "min_hits": 3
+    },
+    "signature": "a308389f245bd56bbe981c41e1645402fdc237a2ab07aa8e3d5fffcf4bd0def8090ccf0179070efb3028d770cf878c4d2a315cfea5ab4a4a89703fbc11ea8806",
+    "signed_at": "2026-03-25T06:56:26.235Z",
+    "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
+  },
+  {
+    "id": "documented-witness-amplification-v1",
+    "label": "Documented witness amplification",
+    "summary": "Legend gains credibility through accumulation of named witness accounts, each citing prior accounts rather than independent observation. Distinguishing signal: witness chain is self-referential, not independently corroborated. Confidence tier signal: UNSUBSTANTIATED_CREDIBLE escalating to PATTERN_MATCH when chain exceeds 3 non-independent citations.",
+    "constraints": {
+      "non_independent_chain_threshold": 3,
+      "self_referential_witness_chain": true
+    },
+    "literary_analog": null,
+    "detection": {
+      "keywords": [
+        "witness",
+        "witnesses",
+        "witness chain",
+        "citation",
+        "citations",
+        "citing prior",
+        "prior accounts",
+        "self-referential",
+        "non-independent",
+        "corroborat",
+        "amplification",
+        "accumulation",
+        "secondhand",
+        "thirdhand",
+        "heard from",
+        "each cited"
+      ],
+      "min_hits": 3
+    },
+    "signature": "e82c414ea59b20d3f98c4f863f000f98d28bbb7f7111018fca48f7c877992c7f3bcb7f7ece6c6de8054f3423e538628897fcbfc9e5c368bc4ffefce081c1150f",
+    "signed_at": "2026-03-25T06:56:26.236Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   }
 ]

@@ -11,5 +11,48 @@
         "confidence_tier": "cross_corroborated"
       }
     ]
+  },
+  "bloody-mary": {
+    "name": "Bloody Mary",
+    "aliases": [
+      "Mary Worth",
+      "Mary I of England (disputed)",
+      "Hell Mary"
+    ],
+    "events": [
+      {
+        "date": "1800-01-01",
+        "type": "first_recorded_instance",
+        "description": "Earliest documented mirror ritual variants appear in 19th century American folklore, linked to divination practices for unmarried women seeking to see future husbands",
+        "source": "Folklore studies — documented in multiple 19th century American almanacs and parlor game collections",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "bell-witch": {
+    "name": "Bell Witch",
+    "aliases": ["Kate", "The Bell Witch of Adams"],
+    "events": [
+      {
+        "date": "1817-01-01",
+        "type": "first_recorded_instance",
+        "description": "Disturbances reported by John Bell family in Adams, Tennessee. First documented account published by Martin V. Ingram in 1894 based on alleged diary of Richard Williams Bell",
+        "source": "Ingram, M.V. — Authenticated History of the Bell Witch (1894)",
+        "confidence_tier": "single_source"
+      }
+    ]
+  },
+  "resurrection-mary": {
+    "name": "Resurrection Mary",
+    "aliases": ["The Vanishing Hitchhiker (Chicago variant)"],
+    "events": [
+      {
+        "date": "1930-01-01",
+        "type": "first_recorded_instance",
+        "description": "First reported sightings near Resurrection Cemetery, Justice Illinois. Multiple independent accounts from cab drivers and motorists documented through 1930s-1970s",
+        "source": "Chicago folklore records — documented by folklorist Richard Crowe",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
   }
 }

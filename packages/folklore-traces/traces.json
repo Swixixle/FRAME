@@ -1,0 +1,54 @@
+{
+  "bloody-mary": {
+    "what": "Bloody Mary is an American mirror-divination legend: chanting a name before a mirror is said to produce an apparition. Scholarship ties variants to 19th-century parlor and almanac traditions; Mass / playground oral tradition spread is documented from the mid-20th century onward.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Legend figure: Bloody Mary (collective attribution)", "confidence_tier": "aggregated_registry" }
+    ],
+    "when": {
+      "earliest_appearance": "19th century — mirror fortune-telling and related ritual games in U.S. folklore sources; playground chain documented from circa 1960s in ethnographic accounts.",
+      "source": "Folklore studies; North American almanac and schoolyard collections",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_origin_author", "primary_manuscript_attribution"],
+    "source_type": "text",
+    "ledger_slug": "bloody-mary"
+  },
+  "bell-witch": {
+    "what": "The Bell Witch is a Tennessee haunting legend centered on the John Bell family (Adams, Robertson County). The standard published narrative derives largely from Martin V. Ingram's 1894 work, which claims basis in family papers; earlier oral and newspaper layers precede the book.",
+    "what_confidence_tier": "single_source",
+    "who": [
+      { "name": "John Bell family (historical household)", "confidence_tier": "official_secondary" },
+      { "name": "Martin V. Ingram (compiler, 1894)", "confidence_tier": "single_source" }
+    ],
+    "when": {
+      "earliest_appearance": "1817 — reported disturbances in Bell household per later compilation; 1894 — first consolidated print narrative (Authenticated History).",
+      "source": "Ingram (1894); prior regional oral tradition (not fully independently verified in primary contemporaneous record for all claims).",
+      "confidence_tier": "single_source"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["contemporaneous_chain_of_custody_for_diary", "independent_modern_forensic_verification"],
+    "source_type": "text",
+    "ledger_slug": "bell-witch"
+  },
+  "resurrection-mary": {
+    "what": "Resurrection Mary is a Chicago vanishing-hitchhiker legend tied to Resurrection Cemetery (Justice, IL). Multiple driver and bystander narratives accumulated from the 1930s onward; folklorist documentation treats it as an oral-tradition complex, not a single verified incident.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Richard Crowe (folklorist, documented tellings)", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "1930s onward — layered sighting accounts near Archer Avenue / Resurrection Cemetery in published folklore record.",
+      "source": "Chicago-area folklore collections; Crowe and successor researchers",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_named_corporeal_identity_verified_in_vital_records", "uniform_metaphysical_claim_verification"],
+    "source_type": "text",
+    "ledger_slug": "resurrection-mary"
+  }
+}

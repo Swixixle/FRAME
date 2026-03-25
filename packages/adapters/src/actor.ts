@@ -1,6 +1,10 @@
 import type { DepthLayer, ActorLayerResult, ActorRecord } from "@frame/types";
 import { ConfidenceTier, DEPTH_LAYER_ACTOR } from "@frame/types";
-import { findActorByExactNameOrAlias, getActor } from "@frame/actor-ledger";
+import {
+  findActorByExactNameOrAlias,
+  getActor,
+  listLedgerSearchHints,
+} from "@frame/actor-ledger";
 import { extractOriginSeedingEntities } from "./origin.js";
 import { extractPlatformsMentionedFromNarrative } from "./spread.js";
 
@@ -56,12 +60,31 @@ function tryResolveActorCandidate(raw: string): ActorRecord | null {
   return null;
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Match ledger `name` / `alias` strings as whole phrases (longer hints first). */
+function hintsMentionedInText(text: string): string[] {
+  const hit: string[] = [];
+  for (const hint of listLedgerSearchHints()) {
+    const h = hint.trim();
+    if (h.length < 2) continue;
+    const re = new RegExp(`\\b${escapeRegExp(h)}\\b`, "i");
+    if (re.test(text)) hit.push(h);
+  }
+  return hit;
+}
+
 function mergeCandidates(text: string): string[] {
   const set = new Set<string>();
   for (const x of extractOriginSeedingEntities(text)) {
     if (x.trim()) set.add(x.trim());
   }
   for (const x of extractPlatformsMentionedFromNarrative(text)) {
+    if (x.trim()) set.add(x.trim());
+  }
+  for (const x of hintsMentionedInText(text)) {
     if (x.trim()) set.add(x.trim());
   }
   return [...set].sort((a, b) => a.localeCompare(b));

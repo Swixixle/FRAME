@@ -39,6 +39,19 @@ function sortEventsByDate(events: ActorEvent[]): ActorEvent[] {
   return [...events].sort((a, b) => a.date.localeCompare(b.date));
 }
 
+/** Every `name` and `alias` string for substring/boundary matching in narratives (longer strings first). */
+export function listLedgerSearchHints(): string[] {
+  const ledger = loadLedger();
+  const hints = new Set<string>();
+  for (const row of Object.values(ledger)) {
+    if (row.name?.trim()) hints.add(row.name.trim());
+    for (const al of row.aliases) {
+      if (al?.trim()) hints.add(al.trim());
+    }
+  }
+  return [...hints].sort((a, b) => b.length - a.length);
+}
+
 function humanizeSlug(slug: string): string {
   return slug
     .split("-")
