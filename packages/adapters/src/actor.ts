@@ -886,8 +886,9 @@ function subjectsFromIsWas(text: string): string[] {
     const s = m[1].trim();
     if (s.length >= 2) out.push(s);
   }
+  /** No `/i` — with `i`, `[A-Z]` matches lowercase and swallows words like "suburban". */
   const reSight =
-    /\b((?:[A-Z][a-z]+\s+){2,}[A-Z][a-z]+)\s+(?:sightings|reports|legend)\b/gi;
+    /\b((?:[A-Z][a-z]+\s+){2,}[A-Z][a-z]+)\s+(?:sightings|reports|legend)\b/g;
   while ((m = reSight.exec(text)) !== null) {
     const s = m[1].trim();
     if (s.length >= 2) out.push(s);
@@ -903,6 +904,82 @@ function bareProperNamePhrases(text: string): string[] {
     return [t];
   }
   return [];
+}
+
+/** Articles / function words — never start a Layer 4 candidate phrase. */
+const CAP_PHRASE_REJECT_FIRST = new Set([
+  "the",
+  "a",
+  "an",
+  "and",
+  "or",
+  "but",
+  "if",
+  "in",
+  "on",
+  "at",
+  "to",
+  "for",
+  "of",
+  "as",
+  "is",
+  "was",
+  "are",
+  "it",
+  "this",
+  "that",
+]);
+
+function normalizeWordToken(raw: string): string {
+  return raw
+    .replace(/^[\[\(""„«'`]+|[\]\)""»'`,;:]+$/g, "")
+    .replace(/^[¿¡]+/, "")
+    .trim();
+}
+
+/**
+ * True for tokens that can appear in a capitalized proper-noun run (incl. "St.", "Dr.", "NYC").
+ */
+function isCapitalizedNameToken(tok: string): boolean {
+  if (!tok) return false;
+  if (/^[0-9]/.test(tok)) return false;
+  if (/^[A-Z]{2,6}$/.test(tok)) return true;
+  if (/^[A-Z][a-z]{1,24}\.$/.test(tok)) return true;
+  if (/^[A-Z][a-z']+$/.test(tok)) return true;
+  return false;
+}
+
+function phraseMeetsConfidence(phrase: string): boolean {
+  const compact = phrase.replace(/[\s'.]/g, "");
+  if (compact.length < 4) return false;
+  const lower = phrase.trim().toLowerCase();
+  if (CAP_PHRASE_REJECT_FIRST.has(lower)) return false;
+  const first = phrase.split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (CAP_PHRASE_REJECT_FIRST.has(first)) return false;
+  return true;
+}
+
+/**
+ * Any contiguous run of 1–4 capitalized words in the narrative (no is/was / ledger required).
+ * Deduplicated; overlapping phrases are all kept (e.g. "Silver Bridge" and "Point Pleasant" separately).
+ */
+function capitalizedPhraseExtractor(text: string): string[] {
+  const raw = text.trim();
+  if (!raw) return [];
+  const tokens = raw.split(/\s+/).map(normalizeWordToken).filter(Boolean);
+  const out = new Set<string>();
+
+  for (let i = 0; i < tokens.length; i++) {
+    if (!isCapitalizedNameToken(tokens[i]!)) continue;
+    for (let len = 1; len <= 4 && i + len <= tokens.length; len++) {
+      const slice = tokens.slice(i, i + len);
+      if (!slice.every((w) => isCapitalizedNameToken(w!))) break;
+      const phrase = slice.join(" ");
+      if (!phraseMeetsConfidence(phrase)) continue;
+      out.add(phrase);
+    }
+  }
+  return [...out];
 }
 
 function mergeCandidates(text: string): string[] {
@@ -922,7 +999,20 @@ function mergeCandidates(text: string): string[] {
   for (const x of bareProperNamePhrases(text)) {
     if (x.trim()) set.add(x.trim());
   }
+  for (const x of capitalizedPhraseExtractor(text)) {
+    if (x.trim()) set.add(x.trim());
+  }
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/** Capitalized 1–4 word phrases only (Layer 4 helper); exported for tests. */
+export function extractCapitalizedPhraseCandidates(text: string): string[] {
+  return capitalizedPhraseExtractor(text);
+}
+
+/** Full Layer 4 candidate merge (tests / diagnostics). */
+export function mergeLayer4Candidates(text: string): string[] {
+  return mergeCandidates(text);
 }
 
 function tierFor(found: ActorRecord[], absentCount: number): ConfidenceTier {
