@@ -9,6 +9,8 @@ import type {
 import { ConfidenceTier, DEPTH_LAYER_ACTOR } from "@frame/types";
 import { lookupInternetArchive } from "./sources/internet-archive.js";
 import { lookupChroniclingAmerica } from "./sources/chronicling-america.js";
+import { lookupMysteriousUniverse } from "./sources/mysterious-universe.js";
+import { lookupAnomalist } from "./sources/anomalist.js";
 import {
   findActorByExactNameOrAlias,
   getActor,
@@ -28,23 +30,51 @@ const UA = "FrameActorLayer/1.0 (https://github.com/Swixixle/FRAME)";
 
 const SURFACE_MODEL_DEFAULT_CHAIN = ["claude-haiku-4-5", "claude-3-haiku-20240307"] as const;
 
-/** Shared promises so Internet Archive + Chronicling America run in parallel with Wikidata / Wikipedia / web. */
-export type DynamicLookupArchivePromises = {
+/** Shared promises so archives + paranormal RSS run in parallel with Wikidata / Wikipedia / web. */
+export type ParallelActorStackPromises = {
   ia: Promise<ActorEvent[]>;
   ca: Promise<ActorEvent[]>;
+  mu: Promise<ActorEvent[]>;
+  an: Promise<ActorEvent[]>;
 };
 
-function mergeArchiveStack(rec: ActorRecord, iaEvents: ActorEvent[], caEvents: ActorEvent[]): ActorRecord {
+function withLedgerPrimaryCategory(rec: ActorRecord): ActorRecord {
+  const sources = rec.lookup_source ?? [];
+  if (!sources.includes("ledger")) return rec;
+  return {
+    ...rec,
+    events: rec.events.map((e) => ({
+      ...e,
+      source_category: e.source_category ?? "primary_historical",
+    })),
+  };
+}
+
+function mergeExternalStacks(
+  rec: ActorRecord,
+  stacks: {
+    ia: ActorEvent[];
+    ca: ActorEvent[];
+    mu: ActorEvent[];
+    an: ActorEvent[];
+  },
+): ActorRecord {
   const base: ActorLookupSource[] = rec.lookup_source ? [...rec.lookup_source] : [];
-  if (iaEvents.length && !base.includes("internet_archive")) base.push("internet_archive");
-  if (caEvents.length && !base.includes("chronicling_america")) base.push("chronicling_america");
-  if (iaEvents.length === 0 && caEvents.length === 0) {
+  const mark = (events: ActorEvent[], src: ActorLookupSource) => {
+    if (events.length && !base.includes(src)) base.push(src);
+  };
+  mark(stacks.ia, "internet_archive");
+  mark(stacks.ca, "chronicling_america");
+  mark(stacks.mu, "mysterious_universe");
+  mark(stacks.an, "anomalist");
+  const extra = [...stacks.ia, ...stacks.ca, ...stacks.mu, ...stacks.an];
+  if (extra.length === 0) {
     return { ...rec, lookup_source: base };
   }
   return {
     ...rec,
     lookup_source: base,
-    events: [...rec.events, ...iaEvents, ...caEvents],
+    events: [...rec.events, ...extra],
   };
 }
 
@@ -205,6 +235,7 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
           description: descFinal,
           source: "Wikidata — dynamically retrieved, not hand-verified",
           confidence_tier: ConfidenceTier.SingleSource,
+          source_category: "dynamic_inference",
         },
       ],
     };
@@ -249,6 +280,7 @@ export async function lookupWikipedia(name: string): Promise<ActorRecord | null>
           description: extract.slice(0, 1200),
           source: "Wikipedia REST summary — dynamically retrieved, not hand-verified",
           confidence_tier: ConfidenceTier.SingleSource,
+          source_category: "dynamic_inference",
         },
       ],
     };
@@ -331,6 +363,7 @@ export async function lookupWeb(name: string): Promise<ActorRecord | null> {
           cite ||
           "Anthropic web inference — dynamically retrieved, not hand-verified (structural heuristic)",
         confidence_tier: ConfidenceTier.StructuralHeuristic,
+        source_category: "dynamic_inference",
       },
     ],
   };
@@ -388,6 +421,7 @@ async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRe
           description: surface.what,
           source: anchorSource,
           confidence_tier: surface.what_confidence_tier,
+          source_category: "dynamic_inference",
         },
       ],
     };
@@ -397,15 +431,17 @@ async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRe
 }
 
 /**
- * Wikidata → Wikipedia → web inference, merged with Internet Archive + Chronicling America
- * (archive fetches run in parallel when `archive` passes shared promises from `getActorLayer`).
+ * Wikidata → Wikipedia → web inference, merged with Internet Archive, Chronicling America,
+ * and paranormal RSS (shared promises from `getActorLayer` keep fetches parallel).
  */
 export async function dynamicLookupChain(
   name: string,
-  archive?: DynamicLookupArchivePromises,
+  parallel?: ParallelActorStackPromises,
 ): Promise<ActorRecord | null> {
-  const iaP = archive?.ia ?? lookupInternetArchive(name);
-  const caP = archive?.ca ?? lookupChroniclingAmerica(name);
+  const iaP = parallel?.ia ?? lookupInternetArchive(name);
+  const caP = parallel?.ca ?? lookupChroniclingAmerica(name);
+  const muP = parallel?.mu ?? lookupMysteriousUniverse(name);
+  const anP = parallel?.an ?? lookupAnomalist(name);
 
   const wd = await lookupWikidata(name);
   let main: ActorRecord | null = null;
@@ -416,21 +452,29 @@ export async function dynamicLookupChain(
     else main = await lookupWeb(name);
   }
 
-  const [iaEvents, caEvents] = await Promise.all([iaP, caP]);
+  const [iaEvents, caEvents, muEvents, anEvents] = await Promise.all([iaP, caP, muP, anP]);
   if (!main) {
-    if (iaEvents.length === 0 && caEvents.length === 0) return null;
+    const stacked = [...iaEvents, ...caEvents, ...muEvents, ...anEvents];
+    if (stacked.length === 0) return null;
     const lookup_source: ActorLookupSource[] = [];
     if (iaEvents.length) lookup_source.push("internet_archive");
     if (caEvents.length) lookup_source.push("chronicling_america");
+    if (muEvents.length) lookup_source.push("mysterious_universe");
+    if (anEvents.length) lookup_source.push("anomalist");
     return {
       slug: `hist-${actorNameToSlug(name)}-${shortHash(name)}`,
       name,
       aliases: [],
       lookup_source,
-      events: [...iaEvents, ...caEvents],
+      events: stacked,
     };
   }
-  return mergeArchiveStack(main, iaEvents, caEvents);
+  return mergeExternalStacks(main, {
+    ia: iaEvents,
+    ca: caEvents,
+    mu: muEvents,
+    an: anEvents,
+  });
 }
 
 function actorSlugCandidates(name: string): string[] {
@@ -459,10 +503,10 @@ function tryResolveActorCandidate(raw: string): ActorRecord | null {
     for (const slug of actorSlugCandidates(variant)) {
       if (slug === "unknown") continue;
       const row = getActor(slug);
-      if (row) return { ...row, lookup_source: ["ledger"] };
+      if (row) return withLedgerPrimaryCategory({ ...row, lookup_source: ["ledger"] });
     }
     const byName = findActorByExactNameOrAlias(variant);
-    if (byName) return { ...byName, lookup_source: ["ledger"] };
+    if (byName) return withLedgerPrimaryCategory({ ...byName, lookup_source: ["ledger"] });
   }
   return null;
 }
@@ -572,15 +616,22 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
   for (const name of candidates) {
     const iaP = lookupInternetArchive(name);
     const caP = lookupChroniclingAmerica(name);
+    const muP = lookupMysteriousUniverse(name);
+    const anP = lookupAnomalist(name);
     const ledgerRec = tryResolveActorCandidate(name);
     if (ledgerRec) {
-      const [iaEvents, caEvents] = await Promise.all([iaP, caP]);
-      const rec = mergeArchiveStack(ledgerRec, iaEvents, caEvents);
+      const [iaEvents, caEvents, muEvents, anEvents] = await Promise.all([iaP, caP, muP, anP]);
+      const rec = mergeExternalStacks(ledgerRec, {
+        ia: iaEvents,
+        ca: caEvents,
+        mu: muEvents,
+        an: anEvents,
+      });
       if (!foundBySlug.has(rec.slug)) {
         foundBySlug.set(rec.slug, rec);
       }
     } else {
-      const dyn = await dynamicLookupChain(name, { ia: iaP, ca: caP });
+      const dyn = await dynamicLookupChain(name, { ia: iaP, ca: caP, mu: muP, an: anP });
       if (dyn) {
         dynamic_lookups++;
         if (!foundBySlug.has(dyn.slug)) {

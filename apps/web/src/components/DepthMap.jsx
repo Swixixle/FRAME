@@ -284,7 +284,51 @@ const ACTOR_SOURCE_BADGE_ORDER = [
   "web_inference",
   "internet_archive",
   "chronicling_america",
+  "mysterious_universe",
+  "anomalist",
 ];
+
+const ACTOR_EVENT_CATEGORY_LABEL = {
+  primary_historical: "Primary historical",
+  academic: "Academic",
+  news_archive: "News archive",
+  paranormal_community: "Paranormal / community",
+  dynamic_inference: "Dynamic inference",
+};
+
+/** @param {Array<Record<string, unknown>>} events */
+function groupActorEventsByCategory(events) {
+  const CATEGORY_ORDER = [
+    "primary_historical",
+    "news_archive",
+    "academic",
+    "paranormal_community",
+    "dynamic_inference",
+  ];
+  const groups = new Map();
+  for (const ev of events || []) {
+    const raw = ev.source_category;
+    const key = raw && typeof raw === "string" ? raw : "_other";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(ev);
+  }
+  const sortedKeys = [...groups.keys()].sort((a, b) => {
+    const rank = (k) => {
+      if (k === "_other") return 999;
+      const i = CATEGORY_ORDER.indexOf(k);
+      return i === -1 ? 998 : i;
+    };
+    return rank(a) - rank(b);
+  });
+  return sortedKeys.map((k) => ({
+    key: k,
+    label:
+      k === "_other"
+        ? "Other sources"
+        : ACTOR_EVENT_CATEGORY_LABEL[k] || String(k).replace(/_/g, " "),
+    items: groups.get(k),
+  }));
+}
 
 function singleActorSourceBadge(source) {
   if (source === "ledger") {
@@ -326,6 +370,20 @@ function singleActorSourceBadge(source) {
     return (
       <span key="chronicling_america" className="depth-actor-source-badge depth-actor-source-ca">
         CHRONICLING AMERICA
+      </span>
+    );
+  }
+  if (source === "mysterious_universe") {
+    return (
+      <span key="mysterious_universe" className="depth-actor-source-badge depth-actor-source-mu">
+        MYSTERIOUS UNIVERSE
+      </span>
+    );
+  }
+  if (source === "anomalist") {
+    return (
+      <span key="anomalist" className="depth-actor-source-badge depth-actor-source-anom">
+        ANOMALIST
       </span>
     );
   }
@@ -423,17 +481,22 @@ function ActorLayerFields({ actorLayer }) {
               {(a.events || []).length > 0 ? (
                 <div className="depth-spread-block">
                   <strong>Events</strong>
-                  <ul className="depth-actor-events">
-                    {(a.events || []).map((ev, i) => (
-                      <li key={`${ev.date}-${i}`}>
-                        <span className="depth-actor-ev-date">{ev.date}</span>{" "}
-                        <span className="depth-muted">{ev.type}</span>
-                        <TierBadge tier={ev.confidence_tier} />
-                        <p className="depth-actor-ev-desc">{ev.description}</p>
-                        <p className="depth-muted depth-actor-ev-src">{ev.source}</p>
-                      </li>
-                    ))}
-                  </ul>
+                  {groupActorEventsByCategory(a.events || []).map((grp) => (
+                    <div key={grp.key} className="depth-actor-event-group">
+                      <h4 className="depth-actor-event-group-title">{grp.label}</h4>
+                      <ul className="depth-actor-events">
+                        {grp.items.map((ev, i) => (
+                          <li key={`${grp.key}-${ev.date}-${i}`}>
+                            <span className="depth-actor-ev-date">{ev.date}</span>{" "}
+                            <span className="depth-muted">{ev.type}</span>
+                            <TierBadge tier={ev.confidence_tier} />
+                            <p className="depth-actor-ev-desc">{ev.description}</p>
+                            <p className="depth-muted depth-actor-ev-src">{ev.source}</p>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <p className="depth-muted">No events on this ledger row.</p>

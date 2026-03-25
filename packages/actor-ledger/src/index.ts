@@ -1,7 +1,7 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ActorEvent, ActorRecord } from "@frame/types";
+import type { ActorEvent, ActorRecord, ActorSourceCategory } from "@frame/types";
 import { ConfidenceTier } from "@frame/types";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -17,6 +17,14 @@ type StoredActor = {
 type LedgerRoot = Record<string, StoredActor>;
 
 const TIER_SET = new Set<string>(Object.values(ConfidenceTier));
+
+const SOURCE_CATEGORY_SET = new Set<string>([
+  "primary_historical",
+  "academic",
+  "news_archive",
+  "paranormal_community",
+  "dynamic_inference",
+]);
 
 function loadLedger(): LedgerRoot {
   const raw = readFileSync(LEDGER_PATH, "utf8");
@@ -67,6 +75,10 @@ function assertActorEvent(event: ActorEvent): void {
   const t = event.confidence_tier;
   if (typeof t !== "string" || !TIER_SET.has(t)) {
     throw new Error(`event.confidence_tier must be one of: ${[...TIER_SET].join(", ")}`);
+  }
+  const sc = (event as { source_category?: ActorSourceCategory }).source_category;
+  if (sc != null && typeof sc === "string" && !SOURCE_CATEGORY_SET.has(sc)) {
+    throw new Error(`event.source_category must be one of: ${[...SOURCE_CATEGORY_SET].join(", ")}`);
   }
 }
 

@@ -1956,6 +1956,29 @@ body {
   color: #ccfbf1;
 }
 
+.depth-actor-source-mu {
+  background: #4c1d95;
+  color: #ede9fe;
+}
+
+.depth-actor-source-anom {
+  background: #7c2d12;
+  color: #ffedd5;
+}
+
+.depth-actor-event-group {
+  margin-top: 12px;
+}
+
+.depth-actor-event-group-title {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .depth-actor-absent-chain {
   font-size: 0.8rem;
 }

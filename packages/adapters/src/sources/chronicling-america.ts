@@ -1,7 +1,9 @@
 import type { ActorEvent } from "@frame/types";
+import type { ActorSourceCategory } from "@frame/types";
 import { ConfidenceTier } from "@frame/types";
 
 const UA = "FrameActorLayer/1.0 (https://github.com/Swixixle/FRAME)";
+const SOURCE_CATEGORY: ActorSourceCategory = "news_archive";
 
 type LocResult = {
   title?: string;
@@ -44,6 +46,7 @@ export async function lookupChroniclingAmerica(name: string): Promise<ActorEvent
           description: `${(it.title ?? "").trim() || "Newspaper page"}`,
           source: (it.url ?? "").trim() || legacyUrl,
           confidence_tier: ConfidenceTier.CrossCorroborated,
+          source_category: SOURCE_CATEGORY,
         }));
       }
     }
@@ -68,6 +71,7 @@ export async function lookupChroniclingAmerica(name: string): Promise<ActorEvent
         description: title,
         source: pageUrl,
         confidence_tier: ConfidenceTier.CrossCorroborated,
+        source_category: SOURCE_CATEGORY,
       });
     }
     return out;

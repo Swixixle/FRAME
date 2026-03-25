@@ -1,6 +1,14 @@
 import type { ConfidenceTier } from "./depth.js";
 import type { SurfaceNamedActor, SurfaceWhenBlock } from "./surface-result.js";
 
+/** Provenance grouping for Layer 4 actor timeline rows (UI + receipts). */
+export type ActorSourceCategory =
+  | "primary_historical"
+  | "academic"
+  | "news_archive"
+  | "paranormal_community"
+  | "dynamic_inference";
+
 /** Single dated fact in an actor's public-record timeline (Layer 4 ledger). */
 export interface ActorEvent {
   date: string;
@@ -8,6 +16,8 @@ export interface ActorEvent {
   description: string;
   source: string;
   confidence_tier: ConfidenceTier;
+  /** Optional: separates hand-history, archives, community paranormal, and model-derived lines. */
+  source_category?: ActorSourceCategory;
 }
 
 /** Where a Layer 4 actor row was resolved. Omitted on on-disk ledger JSON. */
@@ -17,7 +27,9 @@ export type ActorLookupSource =
   | "wikipedia"
   | "web_inference"
   | "internet_archive"
-  | "chronicling_america";
+  | "chronicling_america"
+  | "mysterious_universe"
+  | "anomalist";
 
 /** Append-only actor row (events grow at the end only). */
 export interface ActorRecord {
