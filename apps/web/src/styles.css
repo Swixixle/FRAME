@@ -1837,6 +1837,31 @@ body {
   margin-top: 4px;
 }
 
+.depth-spread-result {
+  margin-top: 4px;
+}
+
+.depth-spread-meta {
+  margin-top: 6px;
+  align-items: center;
+  gap: 10px;
+}
+
+.depth-spread-block {
+  margin-top: 10px;
+}
+
+.depth-spread-list {
+  margin: 4px 0 0;
+  padding-left: 1.2rem;
+}
+
+.depth-spread-absent,
+.depth-spread-gaps {
+  margin-top: 10px;
+  font-size: 0.88rem;
+}
+
 .depth-match-list {
   list-style: none;
   margin: 0;

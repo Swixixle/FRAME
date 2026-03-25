@@ -200,6 +200,52 @@ function SurfaceTraceFields({ trace, ledgerPresence }) {
   );
 }
 
+function SpreadResultFields({ spread }) {
+  if (!spread || typeof spread !== "object") return null;
+  const platforms = spread.platforms_mentioned || [];
+  const indicators = spread.spread_indicators || [];
+  const absent = spread.absent_fields || [];
+  return (
+    <div className="depth-spread-result">
+      <h3 className="depth-inline-title">Spread signals</h3>
+      <div className="depth-meta-row depth-spread-meta">
+        <TierBadge tier={spread.confidence_tier} />
+        <span className="depth-muted">
+          Time compression (heuristic): {spread.time_compression ? "yes" : "no"}
+        </span>
+      </div>
+      {platforms.length > 0 ? (
+        <div className="depth-spread-block">
+          <strong>Platforms mentioned</strong>
+          <ul className="depth-spread-list">
+            {platforms.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {indicators.length > 0 ? (
+        <div className="depth-spread-block">
+          <strong>Spread indicators</strong>
+          <ul className="depth-spread-list">
+            {indicators.map((x) => (
+              <li key={x}>{x}</li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="depth-muted depth-spread-absent">
+          No spread-indicator phrases detected in this narrative. Absent or underspecified:{" "}
+          {absent.length > 0 ? absent.join(", ") : "spread_indicators"}.
+        </p>
+      )}
+      {indicators.length > 0 && absent.length > 0 ? (
+        <p className="depth-muted depth-spread-gaps">Additional gaps: {absent.join(", ")}.</p>
+      ) : null}
+    </div>
+  );
+}
+
 function MediaClaimsList({ claims, ledgerPresence }) {
   if (!claims || claims.length === 0) return null;
   return (
@@ -290,6 +336,8 @@ export default function DepthMap() {
   const [surfaceError, setSurfaceError] = useState(null);
   const [patternResult, setPatternResult] = useState(null);
   const [patternError, setPatternError] = useState(null);
+  const [spreadResult, setSpreadResult] = useState(null);
+  const [spreadError, setSpreadError] = useState(null);
   const [searchBusy, setSearchBusy] = useState(false);
   const [openDispute, setOpenDispute] = useState(null);
   const [exampleTrace, setExampleTrace] = useState(null);
@@ -401,9 +449,16 @@ export default function DepthMap() {
       setSurfaceError(null);
       setPatternResult(null);
       setPatternError(null);
+      setSpreadResult(null);
+      setSpreadError(null);
       setOpenDispute(null);
 
-      const [sRes, pRes] = await Promise.all([
+      const spreadReq = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ narrative: text }),
+      };
+      const [sRes, pRes, sprRes] = await Promise.all([
         fetch(`${API}/v1/surface`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -414,6 +469,7 @@ export default function DepthMap() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ narrative: text }),
         }),
+        fetch(`${API}/v1/spread`, spreadReq),
       ]);
 
       if (sRes.status === 503) {
@@ -440,6 +496,14 @@ export default function DepthMap() {
         setPatternResult(await pRes.json());
       } else {
         setPatternError(`Pattern match failed (${pRes.status})`);
+      }
+
+      if (sprRes.ok) {
+        setSpreadResult(await sprRes.json());
+        setSpreadError(null);
+      } else {
+        setSpreadResult(null);
+        setSpreadError(`Spread analysis failed (${sprRes.status})`);
       }
 
       setSearchBusy(false);
@@ -494,6 +558,7 @@ export default function DepthMap() {
           }
 
           const isL1 = num === 1;
+          const isL2 = num === 2;
           const isL5 = num === 5;
 
           return (
@@ -543,7 +608,20 @@ export default function DepthMap() {
                 </div>
               ) : null}
 
-              {num === 2 || num === 3 || num === 4 ? (
+              {isL2 ? (
+                <div className="depth-layer-inline">
+                  {searchBusy ? (
+                    <p className="depth-muted depth-trace-hint">Tracing spread…</p>
+                  ) : null}
+                  {!spreadResult && !spreadError && !searchBusy ? (
+                    <p className="depth-limited-msg">Limited sourcing available at this depth.</p>
+                  ) : null}
+                  {spreadError ? <p className="depth-banner-error">{spreadError}</p> : null}
+                  {spreadResult ? <SpreadResultFields spread={spreadResult} /> : null}
+                </div>
+              ) : null}
+
+              {num === 3 || num === 4 ? (
                 <p className="depth-limited-msg">Limited sourcing available at this depth.</p>
               ) : null}
 

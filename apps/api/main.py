@@ -93,6 +93,7 @@ from actor_ledger_api import (
     validate_actor_slug,
 )
 from pattern_api import get_pattern_lib_payload, run_pattern_match
+from spread_api import run_spread
 from surface_adapter import SLENDERMAN_SURFACE_BASELINE, run_surface_layer
 from dispute_api import pattern_ids_in_library, run_dispute_append, run_dispute_get
 from verify_record import verify_generic_record
@@ -214,6 +215,14 @@ class SurfacePostBody(BaseModel):
 
 class PatternMatchBody(BaseModel):
     """Layer 5 pattern heuristic — narrative text only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    narrative: str = Field(..., min_length=1)
+
+
+class SpreadPostBody(BaseModel):
+    """Layer 2 spread heuristic — narrative text only."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -712,6 +721,17 @@ async def pattern_match_post(body: PatternMatchBody) -> dict[str, Any]:
     """Layer 5: keyword/structural match against the pattern catalog (no AI, no external calls)."""
     try:
         return await asyncio.to_thread(run_pattern_match, body.narrative.strip())
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/v1/spread")
+async def spread_post(body: SpreadPostBody) -> dict[str, Any]:
+    """Layer 2: diffusion / syndication heuristics from narrative (no external APIs)."""
+    try:
+        return await asyncio.to_thread(run_spread, body.narrative.strip())
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except json.JSONDecodeError as exc:
