@@ -1,6 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { DepthLayer, SurfaceResult } from "@frame/types";
 import { ConfidenceTier, DEPTH_LAYER_SURFACE } from "@frame/types";
+import { detectInputType } from "./input-detect.js";
+
+export { detectInputType, type SurfaceInputKind } from "./input-detect.js";
 
 const MODEL =
   process.env.ANTHROPIC_SURFACE_MODEL?.trim() || "claude-3-5-sonnet-20241022";
@@ -75,16 +78,46 @@ export async function getSurfaceLayer(input: {
   let narrativeBody: string;
   let sourceUrl: string | null;
   let sourceUrlTier: ConfidenceTier | null;
+  let sourceType: "text" | "html" | "media" = "text";
 
   if (u) {
+    const kind = detectInputType(u);
+    if (kind === "media_url") {
+      throw new Error(
+        "Surface adapter (Node): media URLs are handled by the API podcast pipeline. Use POST /v1/surface with the same URL — the server routes to transcription.",
+      );
+    }
     sourceUrl = u;
+    sourceType = "html";
     const { text, ok } = await fetchUrlNarrative(u);
     narrativeBody = text || "(empty body)";
     sourceUrlTier = ok ? ConfidenceTier.OfficialSecondary : ConfidenceTier.SingleSource;
   } else {
-    sourceUrl = null;
-    sourceUrlTier = null;
-    narrativeBody = n!;
+    const trimmedN = n!.trim();
+    if (trimmedN.startsWith("http://") || trimmedN.startsWith("https://")) {
+      const kind = detectInputType(trimmedN);
+      if (kind === "media_url") {
+        throw new Error(
+          "Surface adapter (Node): media URLs are handled by the API podcast pipeline. Use POST /v1/surface — the server routes to transcription.",
+        );
+      }
+      if (kind === "html_url") {
+        sourceUrl = trimmedN;
+        sourceType = "html";
+        const { text, ok } = await fetchUrlNarrative(trimmedN);
+        narrativeBody = text || "(empty body)";
+        sourceUrlTier = ok ? ConfidenceTier.OfficialSecondary : ConfidenceTier.SingleSource;
+      } else {
+        sourceUrl = null;
+        sourceUrlTier = null;
+        narrativeBody = n!;
+      }
+    } else {
+      sourceUrl = null;
+      sourceUrlTier = null;
+      narrativeBody = n!;
+      sourceType = "text";
+    }
   }
 
   const tierList = Array.from(TIER_VALUES).join(", ");
@@ -193,6 +226,7 @@ ${narrativeBody}
     source_url: sourceUrl,
     source_url_confidence_tier: sourceUrl ? modelUrlTier : null,
     absent_fields: [...new Set(absent_fields)],
+    source_type: sourceType,
   };
 
   return result;

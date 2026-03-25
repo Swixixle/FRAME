@@ -13,6 +13,18 @@ export interface SurfaceWhenBlock {
   confidence_tier: ConfidenceTier;
 }
 
+/** Timestamped claim from media transcription (Layer 1 extension). */
+export interface SurfaceMediaClaim {
+  /** Display string HH:MM:SS */
+  timestamp_label?: string;
+  timestamp_start?: number;
+  timestamp_end?: number;
+  speaker?: string;
+  text?: string;
+  /** Maps claim implication_risk to a confidence-style tier for badges. */
+  confidence_tier?: ConfidenceTier | string;
+}
+
 /**
  * Layer 1 (Surface) extraction — structured only; no free-form assistant prose outside `what`.
  */
@@ -30,6 +42,10 @@ export interface SurfaceResult {
    * Always present; empty only when every field was populated (fully traced surface).
    */
   absent_fields: string[];
+  /** Provenance of extraction: plain text, fetched HTML, or media/podcast pipeline. */
+  source_type?: "text" | "html" | "media";
+  /** Populated when `source_type === "media"` (transcription + claim extraction). */
+  media_claims?: SurfaceMediaClaim[];
 }
 
 export type SurfaceLayerInput =

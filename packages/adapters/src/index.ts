@@ -1,4 +1,5 @@
-export { getSurfaceDepthLayer, getSurfaceLayer } from "./surface.js";
+export { getSurfaceDepthLayer, getSurfaceLayer, detectInputType } from "./surface.js";
+export type { SurfaceInputKind } from "./surface.js";
 export { getSpreadLayer } from "./spread.js";
 export { getOriginLayer } from "./origin.js";
 export { getActorLayer } from "./actor.js";

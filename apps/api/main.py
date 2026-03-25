@@ -678,6 +678,17 @@ def depth_map() -> dict[str, Any]:
     return get_depth_map_payload()
 
 
+# Literal /v1/surface/slenderman must stay before any future GET /v1/surface/{...} so
+# Starlette does not bind "slenderman" as a path parameter.
+@app.get("/v1/surface/slenderman")
+def surface_slenderman_benchmark() -> dict[str, Any]:
+    """
+    Inoculation baseline: fully traced Layer 1 for Slender Man (2009, Eric Knudsen / Victor Surge, Something Awful).
+    Does not invoke the adapter.
+    """
+    return SLENDERMAN_SURFACE_BASELINE
+
+
 @app.post("/v1/surface")
 async def surface_post(body: SurfacePostBody) -> dict[str, Any]:
     """
@@ -694,15 +705,6 @@ async def surface_post(body: SurfacePostBody) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail=f"surface adapter output: {exc}") from exc
-
-
-@app.get("/v1/surface/slenderman")
-def surface_slenderman_benchmark() -> dict[str, Any]:
-    """
-    Inoculation baseline: fully traced Layer 1 for Slender Man (2009, Eric Knudsen / Victor Surge, Something Awful).
-    Does not invoke the adapter.
-    """
-    return SLENDERMAN_SURFACE_BASELINE
 
 
 @app.post("/v1/pattern-match")

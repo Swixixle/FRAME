@@ -1,20 +1,23 @@
 """
-Podcast / video adapter: download audio, Whisper transcription, Claude claim extraction.
+Podcast / video adapter: download audio, transcription (AssemblyAI or Whisper), Claude claim extraction.
 
 Caps: first 30 minutes of audio only (v1 — Render timeouts).
-Requires: yt-dlp, ffmpeg (for trim), faster-whisper, ANTHROPIC_API_KEY for claims.
+Requires: yt-dlp, ffmpeg (for trim); ASSEMBLYAI_API_KEY (preferred) or faster-whisper; ANTHROPIC_API_KEY for claims.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 # Max audio processed (seconds) — v1 cap for serverless timeouts
 PODCAST_MAX_SECONDS = int(os.environ.get("FRAME_PODCAST_MAX_SECONDS", str(30 * 60)))
@@ -206,6 +209,72 @@ def probe_audio_duration_seconds(path: str) -> float | None:
     return None
 
 
+def assemblyai_confidence_to_tier(confidence: Any) -> str:
+    """
+    Map AssemblyAI per-utterance confidence (0.0–1.0) to dossier-style tier strings.
+    > 0.85 → cross_corroborated; 0.65–0.85 inclusive → single_source; else structural_heuristic.
+    """
+    if confidence is None:
+        return "structural_heuristic"
+    try:
+        c = float(confidence)
+    except (TypeError, ValueError):
+        return "structural_heuristic"
+    if c > 0.85:
+        return "cross_corroborated"
+    if c >= 0.65:
+        return "single_source"
+    return "structural_heuristic"
+
+
+def format_diarization_speaker_label(raw: Any) -> str:
+    """Normalize AAI speaker ids (e.g. A) to Speaker A for display."""
+    if raw is None:
+        return "unknown"
+    s = str(raw).strip()
+    if not s:
+        return "unknown"
+    low = s.lower()
+    if low.startswith("speaker"):
+        return s
+    return f"Speaker {s}"
+
+
+def _format_ts_hhmmss(seconds: float) -> str:
+    s = int(max(0.0, float(seconds)))
+    h, m, sec = s // 3600, (s % 3600) // 60, s % 60
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
+def utterances_to_media_claims_dicts(utterances: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build Surface `media_claims` rows from serialized AssemblyAI utterances (ms timestamps)."""
+    out: list[dict[str, Any]] = []
+    for u in utterances:
+        if not isinstance(u, dict):
+            continue
+        text = str(u.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            start_ms = int(u.get("start", 0))
+            end_ms = int(u.get("end", start_ms))
+        except (TypeError, ValueError):
+            start_ms, end_ms = 0, 0
+        ts0 = start_ms / 1000.0
+        ts1 = end_ms / 1000.0
+        tier = assemblyai_confidence_to_tier(u.get("confidence"))
+        sp = format_diarization_speaker_label(u.get("speaker"))
+        out.append({
+            "timestamp_label": _format_ts_hhmmss(ts0),
+            "timestamp_start": ts0,
+            "timestamp_end": ts1,
+            "speaker": sp,
+            "text": text[:2000],
+            "confidence_tier": tier,
+        })
+    return out
+
+
 _whisper_model: Any = None
 
 
@@ -227,8 +296,8 @@ def _get_whisper_model() -> Any:
     return _whisper_model
 
 
-def transcribe_audio(path: str) -> dict[str, Any]:
-    """Run faster-whisper. Returns segments, full_text, duration, language."""
+def transcribe_audio_whisper(path: str) -> dict[str, Any]:
+    """Run faster-whisper. Returns segments, full_text, duration, language (no utterances)."""
     model = _get_whisper_model()
     segments_iter, info = model.transcribe(
         path,
@@ -251,9 +320,114 @@ def transcribe_audio(path: str) -> dict[str, Any]:
     return {
         "segments": segments,
         "full_text": full_text,
+        "text": full_text,
         "duration": duration,
         "language": info.language if hasattr(info, "language") else "unknown",
+        "transcription_provider": "whisper",
     }
+
+
+def transcribe_audio_assemblyai(file_path: str) -> dict[str, Any]:
+    """
+    Upload file to AssemblyAI with speaker diarization, poll until complete.
+    Returns the same keys as Whisper plus `utterances` (list of dicts) for Layer 1 media_claims.
+    Requires ASSEMBLYAI_API_KEY.
+    """
+    import assemblyai as aai
+
+    key = os.environ.get("ASSEMBLYAI_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("ASSEMBLYAI_API_KEY is required for AssemblyAI transcription")
+
+    aai.settings.api_key = key
+    config = aai.TranscriptionConfig(speaker_labels=True)
+    transcriber = aai.Transcriber()
+    transcript = transcriber.transcribe(file_path, config=config)
+
+    from assemblyai.types import TranscriptStatus
+
+    if transcript.status != TranscriptStatus.completed:
+        err = transcript.error or "unknown error"
+        raise RuntimeError(f"AssemblyAI transcription failed: {err}")
+
+    full_text = (transcript.text or "").strip()
+    audio_duration = transcript.audio_duration
+    duration = float(audio_duration) if audio_duration is not None else 0.0
+
+    lc = transcript.language_code
+    language = str(lc) if lc is not None else "unknown"
+
+    utterances_raw = transcript.utterances or []
+    utterances: list[dict[str, Any]] = []
+    segments: list[dict[str, Any]] = []
+
+    for u in utterances_raw:
+        text = (u.text or "").strip()
+        start_ms = int(u.start)
+        end_ms = int(u.end)
+        conf_raw = u.confidence
+        try:
+            conf_f = float(conf_raw) if conf_raw is not None else None
+        except (TypeError, ValueError):
+            conf_f = None
+        speaker = format_diarization_speaker_label(u.speaker)
+        utterances.append({
+            "speaker": speaker,
+            "start": start_ms,
+            "end": end_ms,
+            "text": text,
+            "confidence": conf_f,
+        })
+        segments.append({
+            "start": start_ms / 1000.0,
+            "end": end_ms / 1000.0,
+            "text": text,
+            "speaker": speaker,
+        })
+
+    if not segments and full_text:
+        duration_fb = float(transcript.audio_duration or 0)
+        duration = duration_fb
+        try:
+            conf_fb = float(transcript.confidence) if transcript.confidence is not None else None
+        except (TypeError, ValueError):
+            conf_fb = None
+        segments = [{
+            "start": 0.0,
+            "end": duration_fb,
+            "text": full_text,
+            "speaker": "unknown",
+        }]
+        utterances = [{
+            "speaker": "unknown",
+            "start": 0,
+            "end": int(max(duration_fb, 0.0) * 1000),
+            "text": full_text,
+            "confidence": conf_fb,
+        }]
+
+    return {
+        "segments": segments,
+        "full_text": full_text,
+        "text": full_text,
+        "duration": duration,
+        "language": language,
+        "utterances": utterances,
+        "transcription_provider": "assemblyai",
+    }
+
+
+def transcribe_audio(path: str) -> dict[str, Any]:
+    """
+    Prefer AssemblyAI when ASSEMBLYAI_API_KEY is set; otherwise Whisper.
+    Both paths return `segments`, `full_text`, `duration`, `language` (and Assembly adds `utterances`).
+    """
+    if os.environ.get("ASSEMBLYAI_API_KEY", "").strip():
+        return transcribe_audio_assemblyai(path)
+    logger.warning(
+        "ASSEMBLYAI_API_KEY not set; using local Whisper transcription (slower, no diarization)."
+    )
+    return transcribe_audio_whisper(path)
 
 
 def extract_speaker_claims(
@@ -531,7 +705,7 @@ def generate_layer_zero(
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text.strip().rstrip(".")
-        cohort = cohort_definition or "Claims extracted from audio via Whisper + Claude"
+        cohort = cohort_definition or "Claims extracted from audio transcription + Claude"
         return {
             "text": text,
             "selected_finding_type": selected.get("type", "general"),
@@ -585,7 +759,7 @@ def assemble_podcast_payload(
         default_op = (
             "Article extraction produced no usable text."
             if content_source == "article"
-            else "Whisper transcription produced no output."
+            else "Transcription produced no output."
         )
         op_msg = transcription.get("operational_unknown", default_op)
         operational.append({"text": op_msg, "resolution_possible": True})
@@ -632,6 +806,16 @@ def assemble_podcast_payload(
     if content_source == "article" and article_source_record:
         sources = [article_source_record]
     else:
+        provider = str(transcription.get("transcription_provider") or "whisper")
+        audio_meta: dict[str, Any] = {
+            "transcription_provider": provider,
+            "language": transcription.get("language", "unknown"),
+            "duration_seconds": str(transcription.get("duration", "")),
+        }
+        if provider == "assemblyai":
+            audio_meta["speaker_labels"] = True
+        else:
+            audio_meta["whisper_model"] = os.environ.get("FRAME_WHISPER_MODEL", "base")
         sources = [
             {
                 "id": "s001",
@@ -639,11 +823,7 @@ def assemble_podcast_payload(
                 "url": audio_info.get("source_url", "upload://local"),
                 "title": audio_info.get("title", "Audio source"),
                 "retrievedAt": audio_info.get("downloaded_at", now),
-                "metadata": {
-                    "whisper_model": os.environ.get("FRAME_WHISPER_MODEL", "base"),
-                    "language": transcription.get("language", "unknown"),
-                    "duration_seconds": str(transcription.get("duration", "")),
-                },
+                "metadata": audio_meta,
             }
         ]
 
@@ -662,12 +842,16 @@ def assemble_podcast_payload(
                 "sourceId": "s001",
             })
         else:
-            narrative.append({
-                "text": (
+            provider = str(transcription.get("transcription_provider") or "whisper")
+            if provider == "assemblyai":
+                trans_note = "Audio transcribed via AssemblyAI (speaker diarization)."
+            else:
+                trans_note = (
                     f"Audio transcribed via Whisper "
-                    f"({os.environ.get('FRAME_WHISPER_MODEL', 'base')} model). "
-                    f"{len(built_claims)} factual claim(s) extracted."
-                ),
+                    f"({os.environ.get('FRAME_WHISPER_MODEL', 'base')} model)."
+                )
+            narrative.append({
+                "text": f"{trans_note} {len(built_claims)} factual claim(s) extracted.",
                 "sourceId": "s001",
             })
 

@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { getApiBase } from "../apiBase.js";
+import { actorLedgerResolved, actorSlugCandidates } from "../utils/actorSlug.js";
+import RabbitNudge from "./RabbitNudge.jsx";
 
 const API = getApiBase();
+
+async function fetchActorInLedger(slug) {
+  const res = await fetch(`${API}/v1/actor/${encodeURIComponent(slug)}`);
+  return res.ok;
+}
 
 /** Verbatim opening copy under ## Tone & Voice in `docs/RABBIT_HOLE_CONTEXT.md`. */
 const OPENING_DISCLAIMER =
@@ -18,6 +25,31 @@ const TIER_BADGE = {
   structural_heuristic: { bg: "#64748b", fg: "#f8fafc", label: "structural heuristic" },
   PATTERN_MATCH: { bg: "#6d28d9", fg: "#f5f3ff", label: "pattern match" },
 };
+
+/** Map claim implication_risk to a spec tier for badge colors */
+function implicationToTier(risk) {
+  const r = String(risk || "low").toLowerCase();
+  if (r === "high") return "cross_corroborated";
+  if (r === "medium") return "single_source";
+  return "structural_heuristic";
+}
+
+const DEPTH_CONFIDENCE_TIERS = new Set([
+  "official_primary",
+  "official_secondary",
+  "aggregated_registry",
+  "cross_corroborated",
+  "single_source",
+  "structural_heuristic",
+]);
+
+/** Media rows may use implication_risk (low/medium/high) or a literal ConfidenceTier (e.g. AssemblyAI mapping). */
+function mediaClaimBadgeTier(claim) {
+  const t = claim?.confidence_tier;
+  const s = t != null ? String(t) : "";
+  if (s && DEPTH_CONFIDENCE_TIERS.has(s)) return s;
+  return implicationToTier(t);
+}
 
 function TierBadge({ tier }) {
   const k = tier === "PATTERN_MATCH" ? "PATTERN_MATCH" : tier;
@@ -114,7 +146,7 @@ function DisputePanel({ patternId, onClose }) {
   );
 }
 
-function SurfaceTraceFields({ trace }) {
+function SurfaceTraceFields({ trace, ledgerPresence }) {
   return (
     <>
       <p className="depth-what">{trace.what}</p>
@@ -124,11 +156,28 @@ function SurfaceTraceFields({ trace }) {
       <div className="depth-who">
         <strong>Who</strong>
         <ul>
-          {(trace.who || []).map((w) => (
-            <li key={w.name}>
-              {w.name} <TierBadge tier={w.confidence_tier} />
-            </li>
-          ))}
+          {(trace.who || []).map((w) => {
+            const { checked, resolvedSlug, inLedger } = actorLedgerResolved(
+              w.name,
+              ledgerPresence,
+            );
+            return (
+              <li key={w.name}>
+                {w.name} <TierBadge tier={w.confidence_tier} />
+                {!checked ? (
+                  <span className="depth-muted rabbit-nudge-pending" title="Checking ledger…">
+                    …
+                  </span>
+                ) : (
+                  <RabbitNudge
+                    href={inLedger ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}` : null}
+                    absent={!inLedger}
+                    label="deeper"
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
       </div>
       <div className="depth-when">
@@ -148,6 +197,54 @@ function SurfaceTraceFields({ trace }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+function MediaClaimsList({ claims, ledgerPresence }) {
+  if (!claims || claims.length === 0) return null;
+  return (
+    <details className="depth-media-claims">
+      <summary className="depth-media-claims-summary">
+        Timestamped claims ({claims.length})
+      </summary>
+      <ul className="depth-media-claim-list">
+        {claims.map((c, i) => {
+          const sp = (c.speaker || "").trim();
+          const skipNudge = !sp || sp.toLowerCase() === "unknown";
+          const { checked, resolvedSlug, inLedger } = skipNudge
+            ? { checked: true, resolvedSlug: null, inLedger: false }
+            : actorLedgerResolved(sp, ledgerPresence);
+          return (
+            <li key={`${c.timestamp_start ?? i}-${i}`} className="depth-media-claim-item">
+              <div className="depth-media-claim-meta">
+                <span className="depth-media-ts">{c.timestamp_label || "—"}</span>
+                {sp ? (
+                  <span className="depth-media-speaker">
+                    {sp}
+                    {!skipNudge ? (
+                      !checked ? (
+                        <span className="depth-muted rabbit-nudge-pending" title="Checking ledger…">
+                          {" "}
+                          …
+                        </span>
+                      ) : (
+                        <RabbitNudge
+                          href={inLedger ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}` : null}
+                          absent={!inLedger}
+                          label="deeper"
+                        />
+                      )
+                    ) : null}
+                  </span>
+                ) : null}
+                <TierBadge tier={mediaClaimBadgeTier(c)} />
+              </div>
+              <p className="depth-media-claim-text">{c.text}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 
@@ -196,6 +293,49 @@ export default function DepthMap() {
   const [searchBusy, setSearchBusy] = useState(false);
   const [openDispute, setOpenDispute] = useState(null);
   const [exampleTrace, setExampleTrace] = useState(null);
+  const [ledgerPresence, setLedgerPresence] = useState({});
+
+  useEffect(() => {
+    const slugs = new Set();
+    const collect = (t) => {
+      if (!t || typeof t !== "object") return;
+      for (const w of t.who || []) {
+        if (w?.name) {
+          for (const s of actorSlugCandidates(w.name)) slugs.add(s);
+        }
+      }
+      for (const c of t.media_claims || []) {
+        const sp = (c?.speaker || "").trim();
+        if (sp && sp.toLowerCase() !== "unknown") {
+          for (const s of actorSlugCandidates(sp)) slugs.add(s);
+        }
+      }
+    };
+    collect(surfaceResult);
+    collect(exampleTrace);
+    if (slugs.size === 0) {
+      setLedgerPresence({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const next = {};
+      await Promise.all(
+        [...slugs].map(async (slug) => {
+          try {
+            const ok = await fetchActorInLedger(slug);
+            if (!cancelled) next[slug] = ok;
+          } catch {
+            if (!cancelled) next[slug] = false;
+          }
+        }),
+      );
+      if (!cancelled) setLedgerPresence(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [surfaceResult, exampleTrace]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,8 +514,16 @@ export default function DepthMap() {
                   ) : null}
                   {!surfaceUnavailable && surfaceResult ? (
                     <div className="depth-surface-result">
-                      <h3 className="depth-inline-title">Surface trace</h3>
-                      <SurfaceTraceFields trace={surfaceResult} />
+                      <div className="depth-surface-result-head">
+                        <h3 className="depth-inline-title">Surface trace</h3>
+                        {surfaceResult.source_type === "media" ? (
+                          <span className="depth-badge-transcribed" title="Transcribed from audio/video">
+                            TRANSCRIBED
+                          </span>
+                        ) : null}
+                      </div>
+                      <SurfaceTraceFields trace={surfaceResult} ledgerPresence={ledgerPresence} />
+                      <MediaClaimsList claims={surfaceResult.media_claims} ledgerPresence={ledgerPresence} />
                     </div>
                   ) : null}
                   {exampleTrace && !surfaceResult && !searchBusy ? (
@@ -383,7 +531,7 @@ export default function DepthMap() {
                       <p className="depth-example-label">
                         <em>Example trace — Slenderman (inoculation baseline)</em>
                       </p>
-                      <SurfaceTraceFields trace={exampleTrace} />
+                      <SurfaceTraceFields trace={exampleTrace} ledgerPresence={ledgerPresence} />
                       <p className="depth-example-slenderman-note">
                         <em>
                           Slenderman was manufactured. We know exactly when, by whom, on which forum. This
@@ -422,6 +570,10 @@ export default function DepthMap() {
                               <div className="depth-match-head">
                                 <code>{m.pattern_id}</code>
                                 <TierBadge tier={m.confidence_tier} />
+                                <RabbitNudge
+                                  href={`${API}/v1/dispute/${encodeURIComponent(m.pattern_id)}`}
+                                  label="disputes"
+                                />
                               </div>
                               <ul className="depth-criteria">
                                 {(m.criteria_met || []).map((c) => (
