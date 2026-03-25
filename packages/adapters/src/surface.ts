@@ -5,8 +5,22 @@ import { detectInputType } from "./input-detect.js";
 
 export { detectInputType, type SurfaceInputKind } from "./input-detect.js";
 
-const MODEL =
-  process.env.ANTHROPIC_SURFACE_MODEL?.trim() || "claude-haiku-4-5-20251001";
+/** Resolved at runtime; API model aliases do not use date suffixes (see Anthropic docs). */
+const SURFACE_MODEL_DEFAULT_CHAIN = ["claude-haiku-4-5", "claude-3-haiku-20240307"] as const;
+
+function surfaceModelCandidates(): string[] {
+  const env = process.env.ANTHROPIC_SURFACE_MODEL?.trim();
+  if (env) return [env];
+  return [...SURFACE_MODEL_DEFAULT_CHAIN];
+}
+
+function isLikelyInvalidModelError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { status?: number; message?: string };
+  const msg = typeof err.message === "string" ? err.message : String(e);
+  if (err.status === 404) return true;
+  return /\bmodel\b/i.test(msg) && /not\s*found|invalid|does\s*not\s*exist|unknown/i.test(msg);
+}
 
 const TIER_VALUES = new Set<string>(Object.values(ConfidenceTier));
 
@@ -149,19 +163,28 @@ ${narrativeBody}
 `;
 
   const client = new Anthropic({ apiKey: key });
-  let msg: Awaited<ReturnType<Anthropic["messages"]["create"]>>;
-  try {
-    msg = await client.messages.create({
-      model: MODEL,
-      max_tokens: 2048,
-      messages: [{ role: "user", content: prompt }],
-    });
-  } catch (e: unknown) {
-    const errText = e instanceof Error ? e.message : String(e);
-    throw new Error(`Anthropic surface: ${errText}`);
+  const candidates = surfaceModelCandidates();
+  let msg: Anthropic.Message | undefined;
+  for (let i = 0; i < candidates.length; i++) {
+    const model = candidates[i]!;
+    try {
+      msg = await client.messages.create({
+        model,
+        max_tokens: 2048,
+        messages: [{ role: "user", content: prompt }],
+      });
+      break;
+    } catch (e: unknown) {
+      if (i < candidates.length - 1 && isLikelyInvalidModelError(e)) continue;
+      const errText = e instanceof Error ? e.message : String(e);
+      throw new Error(`Anthropic surface: ${errText}`);
+    }
+  }
+  if (msg === undefined) {
+    throw new Error("Anthropic surface: no model succeeded");
   }
 
-  const block = msg.content.find((b) => b.type === "text");
+  const block = msg.content.find((b: Anthropic.ContentBlock) => b.type === "text");
   if (!block || block.type !== "text") {
     throw new Error("Anthropic returned no text block");
   }
