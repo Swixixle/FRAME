@@ -820,7 +820,9 @@ async def actor_layer_post(body: ActorLayerPostBody) -> dict[str, Any]:
 async def report_post(body: ReportPostBody) -> dict[str, Any]:
     """
     Five-ring library report: surface, spread, origin, actor layer, pattern match (+ citations).
-    Returns unsigned ExtendedReportPayload; per-ring adapter failures are captured in-ring with absent_fields.
+    When FRAME_PRIVATE_KEY / FRAME_PUBLIC_KEY are set, the body is JCS-hashed (narrative, rings,
+    generated_at) and signed (Ed25519); otherwise `signed` is false with `signing_error`.
+    Per-ring adapter failures are captured in-ring with absent_fields.
     """
     try:
         return await build_extended_report_async(body.narrative.strip())
@@ -2428,6 +2430,15 @@ def list_receipts_catalog() -> dict[str, Any]:
         finally:
             conn.close()
     return {"receipts": items, "count": len(items)}
+
+
+@app.get("/v1/receipts/report/{receipt_id}")
+def report_receipt_stub(receipt_id: str) -> dict[str, Any]:
+    """Placeholder until report receipts are persisted (e.g. PostgreSQL)."""
+    return {
+        "receipt_id": receipt_id,
+        "status": "reports not yet persisted — upgrade to PostgreSQL to enable receipt lookup",
+    }
 
 
 @app.post("/v1/contradiction-analysis")

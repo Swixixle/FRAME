@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import json
+import logging
+import os
+import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from actor_layer_fast import run_actor_layer_fast
 from adapters.scholarly import academic_origin_candidates, search_openalex, search_semantic_scholar
@@ -17,6 +27,90 @@ from surface_adapter import run_surface_layer
 
 RING_TIMEOUT_SEC = 8.0
 _RING_EXECUTOR = ThreadPoolExecutor(max_workers=12)
+_LOG = logging.getLogger(__name__)
+
+
+def _frame_repo_root() -> Path:
+    override = os.environ.get("FRAME_REPO_ROOT")
+    if override:
+        return Path(override).resolve()
+    return Path(__file__).resolve().parents[2]
+
+
+def _jcs_canonicalize(obj: Any) -> str:
+    """RFC 8785 via repo `scripts/jcs-stringify.mjs` (same subprocess contract as main.jcs_canonicalize)."""
+    root = _frame_repo_root()
+    script = root / "scripts" / "jcs-stringify.mjs"
+    payload = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    proc = subprocess.run(
+        ["node", str(script)],
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=False,
+        cwd=str(root),
+        env={**os.environ},
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr or "JCS subprocess failed")
+    return proc.stdout
+
+
+def _frame_public_key_spki_b64() -> str:
+    """SPKI DER, base64 (matches Node receipt embedding); honors FRAME_KEY_FORMAT like frame_crypto."""
+    raw = os.environ.get("FRAME_PUBLIC_KEY", "").strip()
+    if not raw:
+        raise RuntimeError("FRAME_PUBLIC_KEY not set")
+    fmt = (os.environ.get("FRAME_KEY_FORMAT") or "pem").strip().lower()
+    if fmt == "base64":
+        blob = base64.b64decode(raw.strip())
+        try:
+            pem_text = blob.decode("utf-8")
+        except UnicodeDecodeError:
+            pem_text = ""
+        if "BEGIN" in pem_text and "PUBLIC" in pem_text:
+            pem = pem_text.replace("\\n", "\n")
+            pub = serialization.load_pem_public_key(pem.strip().encode())
+        else:
+            pub = serialization.load_der_public_key(blob)
+    else:
+        pem = raw.replace("\\n", "\n").strip("\"'")
+        pub = serialization.load_pem_public_key(pem.strip().encode())
+    if not isinstance(pub, Ed25519PublicKey):
+        raise RuntimeError("FRAME_PUBLIC_KEY must be Ed25519")
+    der = pub.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return base64.b64encode(der).decode("ascii")
+
+
+def _attach_report_signing(
+    base: dict[str, Any],
+    narrative: str,
+    rings: list[dict[str, Any]],
+    generated_at: str,
+) -> dict[str, Any]:
+    from frame_crypto import sign_frame_digest_hex
+
+    signing_body = {
+        "narrative": narrative,
+        "rings": rings,
+        "generated_at": generated_at,
+    }
+    canon = _jcs_canonicalize(signing_body)
+    content_hash = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+    signature = sign_frame_digest_hex(content_hash)
+    public_key = _frame_public_key_spki_b64()
+    short = content_hash[:16]
+    return {
+        **base,
+        "content_hash": content_hash,
+        "signature": signature,
+        "signed": True,
+        "public_key": public_key,
+        "receipt_url": f"/v1/receipts/report/{short}",
+    }
 
 
 def _now_iso() -> str:
@@ -395,7 +489,7 @@ async def build_extended_report_async(narrative: str) -> dict[str, Any]:
             entry["detail"] = defer_detail_by_adapter[k]
         sources_checked.append(entry)
 
-    return {
+    out: dict[str, Any] = {
         "report_id": rid,
         "generated_at": now,
         "narrative": text,
@@ -408,3 +502,8 @@ async def build_extended_report_async(narrative: str) -> dict[str, Any]:
         },
         "sources_checked": sources_checked,
     }
+    try:
+        return _attach_report_signing(out, text, rings, now)
+    except Exception as exc:  # noqa: BLE001 — never fail the report on signing
+        _LOG.exception("Report signing failed")
+        return {**out, "signed": False, "signing_error": str(exc)}
