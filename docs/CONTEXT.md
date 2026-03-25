@@ -64,9 +64,9 @@ Acceptable at current stage — no persistent state required for the demo.
 
 ## Media UI
 
-Located at `/demo` — **Media** tab.
+When the API serves `apps/web/index.html` at **`/demo`**, the bundled app is **Rabbit Hole** (depth map). Frame **media** flows (upload, Hive, OCR, signing) remain available via **`POST /v1/analyze-media`**, **`POST /v1/analyze-and-verify`**, and related routes — see main.py. A static legacy layout may exist as **`apps/web/frame-legacy.html`**.
 
-Input: URL paste or file upload (image/video, max 50MB)
+Input (Frame media routes): URL paste or file upload (image/video, max 50MB)
 
 Processing: job system (`submitJobAndPoll`), 2-second polling for URL jobs; file path uses `POST /v1/analyze-media` then `POST /v1/sign-media-analysis`.
 
@@ -150,89 +150,82 @@ the signing pipeline, and the receipt schema are untouched.
 The verification is live. Anyone can check it. Anyone can re-verify independently.
 
 ## Architecture — Current
-packages/types — shared interfaces (FrameReceiptPayload, SourceRecord, NarrativeSentence)
+packages/types — shared interfaces (receipts, depth map, actor layer, pattern results, `sources_checked` incl. **deferred**)
 packages/signing — Ed25519 + JCS canonicalization (RFC 8785)
-packages/narrative — governance rules, banned words, domain whitelist
-packages/sources — data adapters (FEC live, others stubbed)
-packages/entity — disambiguation
-apps/api — FastAPI: /v1/verify-receipt, /v1/generate-receipt
-apps/web — static demo UI
-apps/macos — FrameCapture.app + `scripts/frame-capture.sh` (screen region → signed receipt URL)
-apps/extension — Chrome/Brave MV3 extension (toolbar + context menu → analyze → sign → receipt tab)
-scripts/generate-keys.ts — key generation (--write-env flag)
-scripts/seed-demo.ts — signs Manchin fixture for demo
-scripts/generate-receipt.ts — called by API to sign live FEC receipts
-scripts/test-fec.ts — local FEC API testing
-scripts/frame-capture.sh — macOS: region capture → POST /v1/analyze-and-verify → clipboard + notification
+packages/sources — FEC, lobbying, 990, Wikidata, combined flows (see package exports)
+packages/adapters — TypeScript depth-layer helpers (surface, spread, origin, actor, pattern, jurisdiction) for Node-backed actor pipeline
+packages/actor-ledger — `ledger.json` + types for Rabbit Hole Layer 4
+packages/pattern-lib — signed pattern catalog
+packages/dispute-log — append-only dispute records
+packages/narrative — governance rules (where used)
+apps/api — FastAPI: receipts, media, jobs, frames/dossiers router, Rabbit Hole depth routes (`/v1/surface`, `/v1/spread`, `/v1/origin`, `/v1/actor-layer`, `/v1/report`, pattern + dispute + actor ledger)
+apps/web — Vite/React **Rabbit Hole** UI (`DepthMap`); `frame-legacy.html` retains a static Frame-style snapshot where needed
+apps/macos — FrameCapture.app + `scripts/frame-capture.sh`
+apps/extension — Chrome/Brave MV3 extension (toolbar + context menu → analyze → sign)
+scripts — receipt generation, `run-actor-layer.mjs`, signing, seed scripts (see `scripts/`)
 
 ## Architecture — Planned Extensions
-The schema is already general. Sources accept any URL. Claims accept any statement.
-FEC is just one adapter. Everything below plugs into the same signing pipeline.
 
-Claim intake layer (next major build):
-- POST /v1/intake — accepts a text claim or video URL
-- Claim classifier — routes to correct adapter(s) based on claim type
-- Video transcription via Whisper — extract claims from video automatically
-- Claim extraction — identify specific falsifiable claims from transcript
+The receipt schema is general; **most “next” work is in Known Gaps** (Rule Change Receipts, Rabbit Hole Layer 6, dispute workflow, music dossier, stronger viral graph).
 
-Adapter roadmap (in priority order):
-1. FEC — DONE (live, any senator by candidate ID)
-2. Senate LDA lobbying disclosures — NEXT (lda.senate.gov/api/v1/, no key required)
-3. IRS 990 — nonprofit financials, foundation money flows (ProPublica Nonprofit Explorer API)
-4. Congress.gov voting record — (API key pending)
-5. Biblical concordance — public domain, for claims made in name of religion
-6. Wikipedia/Wikidata — basic biography, stated positions, known affiliations
-7. Court records — PACER (harder but public)
-8. Existing fact-check databases — PolitiFact, Snopes APIs
+**Still valuable / not exhaustive:**
+- Richer **claim intake** from arbitrary text (beyond current media/podcast flows): classifier + adapter fan-out
+- **PACER / courts**, **embeddable receipt card** for third-party sites
+- **Fact-check APIs** as optional citations (PolitiFact, Snopes-style) — same neutral receipt rules apply
 
-Media / disinformation layer (extends roadmap):
-7. Hive AI detection — set HIVE_API_KEY in Render to enable (https://thehive.ai)
-8. OCR text extraction — Tesseract or Google Vision, extracts claims from screenshots
-9. Media hash ledger — store file hashes to track viral spread across accounts
-
-Distribution layer (future):
-- Shareable receipt URLs — **DONE** (`GET /receipt/:id`, `receiptUrl` on signed responses)
-- macOS menu bar capture — **DONE** (`scripts/frame-capture.sh`, `apps/macos/FrameCapture.app`; menu bar via Platypus or SwiftBar)
-- Browser extension — **DONE** (`apps/extension/` — toolbar popup, “Verify with Frame” on images, receipt tab)
-- Open embed format — receipt card that travels with the claim
+**Already in the tree (do not re-list as greenfield):** FEC, LDA/lobbying receipts, 990, Wikidata, Congress (with key), media OCR + Whisper + optional Hive, pHash ledger, Rabbit Hole layers 1–5, five-ring report.
 
 ## Live URLs
 - API: https://frame-2yxu.onrender.com
 - Demo UI: https://delightful-cucurucho-b09e70.netlify.app
 - GitHub: https://github.com/Swixixle/FRAME
 
+## Session Start Checklist
+
+Do this before changing code in a new session:
+
+1. **`GET /health`** on the Render API (or open `/health` in browser) — confirm deploy is live and not mid-rollout.
+2. **`ANTHROPIC_API_KEY`** — confirm the account has quota; Rabbit Hole Layer 1 (`POST /v1/surface`) fails soft or degrades when credits are exhausted.
+3. **`git pull`** on `main` — handoff docs and API move quickly; start from latest.
+4. **Read `docs/CONTEXT.md` and `docs/RABBIT_HOLE_CONTEXT.md`** end-to-end — they are the single picture of what is built vs. still missing.
+
 ## Current Build Status
-- Ed25519 signing pipeline: COMPLETE (5/5 tests passing)
-- JCS canonicalization (RFC 8785): COMPLETE
-- Tamper detection: COMPLETE
-- Live FEC adapter: COMPLETE
-- POST /v1/verify-receipt: COMPLETE and working on Render
-- POST /v1/generate-receipt: COMPLETE locally, PEM key format issue on Render in progress
-- Demo UI with evidence chain, source links, rabbit hole: COMPLETE on Netlify
-- POST /v1/analyze-media: COMPLETE — SHA-256 + perceptual hash (pHash-DCT-64bit), Claude vision OCR, claim classification with type/entities, primary source URL suggestion, source verification and content snapshotting (SHA-256 of page at retrieval time), Hive AI detection (requires HIVE_API_KEY)
-- POST /v1/sign-media-analysis: COMPLETE — signs full media analysis as Frame receipt including verified source hashes
-- GET /v1/ledger: COMPLETE — SQLite-backed perceptual hash ledger, exact + Hamming distance matching, first-seen timestamps
-- Media upload UI: COMPLETE — drag and drop on /demo, shows claim type, entities, source verification status, content hash, page title
-- Chrome/Brave extension: COMPLETE — `apps/extension/` (MV3, no build step; toolbar + image context menu → receipt tab)
-- Persistent ledger: SQLite at /tmp/frame_ledger.db (resets on redeploy until Render Pro + PostgreSQL)
-- Known gap: source URLs are Claude suggestions — some return 404/403. Need URL resolver that only signs verified sources.
-- Known gap: ledger resets on redeploy. Fix: Render Pro PostgreSQL (swap DATABASE_URL, same code)
-- Combined media pipeline: hash → detect → verify sources → ledger → sign → verify
-- **Gap 3 (OCR → router → adapters):** `apps/api/router.py` + `adapters_media.py` — after Claude extracts claims, `route_claim()` selects fec / irs990 (ProPublica) / lda / congress / wikidata; results on each claim as `adapterResults`; `sign-media-analysis.ts` adds adapter rows to `sources[]` with `metadata.adapterData`. **`POST /v1/analyze-and-verify`** = analyze + route + sign in one call. **`CONGRESS_API_KEY`** required for Congress.gov bill search (free at api.congress.gov).
-- **Gap 4 (entity behavioral ledger):** SQLite table `entity_receipts` — each verified media receipt appends rows per (claim × entity) from `extractedClaimObjects`. **`GET /v1/entity/{name}`**, **`GET /v1/entity/{name}/summary`**, **`GET /v1/entities`**. **`GET /entity/{name}`** serves `apps/web/entity.html` (Cinzel baroque frame). Demo UI links “View entity record →” after analyze-and-verify when entities are present.
-- **Podcast / video adapter:** `apps/api/adapters_podcast.py` — `yt-dlp` download, local **`faster-whisper` `base`** transcription, Claude claim extraction with timestamps + speakers, same source verification + `route_claim` + signing as media. **`POST /v1/analyze-podcast`** (JSON `url` or multipart `file`), **`POST /v1/analyze-and-verify-podcast`**. **`scripts/sign-media-analysis.ts`** supports `sourceType: "podcast"`, transcript source row (`whisper://local/{hash}`), narrative lines `At HH:MM:SS, speaker said: …`. **v1 cap: 30 minutes** of audio (`FRAME_PODCAST_MAX_SECONDS`). Requires **ffmpeg** on `PATH` for trim + acoustic fingerprint. First run may download model weights (slow cold start on free tier). **Spotify app links** not supported — use public RSS episode URLs or YouTube.
-- **Meta Ad Library (“was it paid for”):** `apps/api/adapters/meta_ad_library.py` — Graph API `ads_archive` for political and issue ads; spend ranges normalized; epistemic unknowns for disclosure limits. **`POST /v1/generate-ad-library-receipt`**, **`receipt_type: "ad_library"`** on **`POST /v1/jobs`**. Demo: **Ad Spend** mode on `/demo`. Requires **`META_AD_LIBRARY_TOKEN`** (`ads_read`); without token, signed receipt still returned with operational unknown.
+
+**Frame core**
+- Ed25519 signing + JCS (RFC 8785): COMPLETE
+- `POST /v1/verify-receipt`: COMPLETE (production)
+- Live FEC, lobbying, 990, Wikidata, combined, Ad Library receipt routes: COMPLETE (`scripts/` + `main.py`)
+- `POST /v1/generate-receipt` on Render: COMPLETE when `FRAME_PRIVATE_KEY` and `FRAME_KEY_FORMAT` match (typically `base64`)
+- Async jobs: COMPLETE (`POST /v1/jobs`, `GET /v1/jobs/{job_id}`) — store is in-memory
+- Media stack: `POST /v1/analyze-media`, sign, analyze-and-verify, podcast analyze routes, `GET /v1/ledger` (pHash SQLite): COMPLETE
+- Router on OCR claims (`route_claim` → FEC / 990 / LDA / Congress / Wikidata): COMPLETE; **`CONGRESS_API_KEY`** for Congress.gov
+- Entity behavioral ledger: COMPLETE (`entity_receipts`, `GET /v1/entity/...`, `entity.html`)
+- Chrome/Brave extension: COMPLETE (`apps/extension/`)
+- Schema baselines: COMPLETE (`GET /v1/schema-baselines`)
+
+**Rabbit Hole (March 25, 2026)**
+- Depth map API + UI: COMPLETE
+- `POST /v1/surface`, `GET /v1/surface/slenderman`: COMPLETE (`ANTHROPIC_API_KEY` for live surface)
+- `POST /v1/spread`, `POST /v1/origin`: COMPLETE
+- `POST /v1/actor-layer`: COMPLETE — Node subprocess, full archive/RSS/Wikidata stack + `packages/actor-ledger`
+- `POST /v1/report`: COMPLETE — five-ring parallel report, merged `sources_checked`
+- Report Ring 4 **fast path**: COMPLETE — `actor_layer_fast.py` (ledger-only; external adapters **`deferred`**, detail points to `POST /v1/actor-layer`)
+- Pattern + dispute APIs + actor ledger HTTP: COMPLETE
+- Web: Rabbit Hole shell, DepthMap, receipt manifest, `sources_checked` including **deferred** badges: COMPLETE
+
+**Operational limits (not “missing code”)**
+- Suggested media source URLs may 404/403; verifier records what was retrievable
+- SQLite ledgers reset on hobby redeploy unless DB is externalized
+- Optional keys: `HIVE_API_KEY`, `META_AD_LIBRARY_TOKEN`, `ANTHROPIC_API_KEY`
 
 ## Immediate Next Task
-Fix FRAME_PRIVATE_KEY format on Render so /v1/generate-receipt works in production.
-Key stored as base64 in Render env vars. FRAME_KEY_FORMAT=base64.
+
+1. After each deploy: **`curl`/browser `GET /health`** and smoke **`POST /v1/report`** — Ring 4 should finish quickly and show **`deferred`** rows for IA/CA/RSS/Wikidata-class adapters; use **`POST /v1/actor-layer`** when full corroboration is required.  
+2. Pick one product thread: **Layer 6 jurisdiction adapters**, **dispute `PATCH` workflow**, or **Rule Change Receipt** automation — see Known Gaps.
 
 ## After That
-Build Senate LDA lobbying adapter:
-https://lda.senate.gov/api/v1/
-No API key required.
-Cross-reference with FEC candidate ID: who lobbied this senator, how much, 
-on what issues, in what timeframe relative to their votes.
+
+Deepen whichever thread you select above; do not start Layer 6 until Rabbit Hole layers 1–5 are stable in production Telemetry.
 
 ## Key Technical Notes
 - FEC candidate ID for Manchin: S0WV00090
@@ -247,6 +240,15 @@ on what issues, in what timeframe relative to their votes.
 Built in one overnight session March 19-20 2026.
 Started: broken 500 error, placeholder payload.
 Ended: live FEC pipeline, cryptographic verification, full UI with evidence chain.
+
+### March 25, 2026 — Rabbit Hole depth stack + library report
+- **Types** — actor layer / `sources_checked`, **`deferred`** status for adapters not run in a given context.
+- **`packages/adapters`** — TypeScript depth helpers; actor layer parallel lookups (Internet Archive, Chronicling America, JSTOR check, RSS-style sources, Wikidata/Wikipedia paths).
+- **Node** — `scripts/run-actor-layer.mjs` drives full Layer 4 against `packages/actor-ledger/ledger.json`.
+- **API** — `POST /v1/actor-layer` (full stack); `POST /v1/spread`, `POST /v1/origin`; **`POST /v1/report`** (five rings in parallel, merged manifest + unknowns).
+- **Performance** — `apps/api/actor_layer_fast.py`: report Ring 4 uses ledger word-boundary match only (no outbound HTTP to archives/RSS/wikidata); `sources_checked` marks those adapters **`deferred`** with pointer to **`POST /v1/actor-layer`**.
+- **Web** — `DepthMap` / manifest: **`sources_checked`** panel, **`deferred`** styling; Rabbit Hole title/meta on `index.html`.
+- **Docs** — this file + `docs/RABBIT_HOLE_CONTEXT.md` aligned as session handoff.
 
 ### Task 3.2 — README + polish + E2E
 - **`README.md`:** rewritten for 60-second clarity; curl proofs; API table; stack; env vars.
@@ -310,9 +312,7 @@ Subject classes: politicians, nonprofits, public figures.
 SHA-256 hash, OCR, Whisper, Hive AI detection, yt-dlp fetch.
 Subject classes: social media clips, screenshots, uploaded files.
 
-**Frame Network (not yet started):** Distribution tracking.
-Perceptual hashing, hash ledger, repost mapping.
-Do not build until Media tier is stable.
+**Frame Network (partial):** Perceptual hash ledger (`GET /v1/ledger`) and file hashing are built; cross-platform **repost graph** / viral lineage mapping is not.
 
 ---
 
@@ -322,14 +322,25 @@ Parallel to `/v1/*` receipts: **`POST /frames`** creates a signed `Frame` (Ed255
 
 ## Known Gaps (current)
 
-- `HIVE_API_KEY` not yet configured — AI detection returns `detector: none`
-- `META_AD_LIBRARY_TOKEN` — User token expires; System User token recommended
-- Salience algorithm (Layer Zero) uses rule-based fallback until corpus N=100
-- Music dossier (Liner Notes) specced but not built
-- Rule Change Receipt generation not yet implemented (baselines captured, monitoring not wired)
+**Infra / keys**
+- Optional: `HIVE_API_KEY`, `META_AD_LIBRARY_TOKEN`, `ANTHROPIC_API_KEY` — features degrade gracefully when unset or expired (use System User token for Meta when possible)
 - Job store is in-memory — resets on server restart
-- Browser extension is a skeleton only
-- Custom domain not yet configured
+- pHash / SQLite paths may reset on hobby redeploy until storage is external
+
+**Frame**
+- Rule Change Receipt: baselines captured; automated drift → signed “rule change” receipt not wired
+- Music dossier (Liner Notes) specced, not built
+- Custom domain for `frame-2yxu.onrender.com` optional (`docs/DOMAIN.md`)
+
+**Rabbit Hole**
+- Layer 6 (jurisdiction / comparative) adapters not built — depth map shows sealed floor
+- Dispute workflow: no `PATCH` / moderation status API yet
+- Actor ledger: append API exists; **signed sealed ledger** pattern (HALO-style) not fully productized
+- Report `POST /v1/report` Ring 4 is **ledger-first**; operators must call **`POST /v1/actor-layer`** for full archive/RSS/Wikidata corroboration (UI copy and `sources_checked` **`deferred`** rows document this)
+- Slenderman: static baseline via GET; optional UX for auto-prefill on first load
+
+**Research**
+- Salience / Layer Zero remains rule-heavy until corpus thresholds are met
 
 ---
 
@@ -349,30 +360,18 @@ Parallel to `/v1/*` receipts: **`POST /frames`** creates a signed `Frame` (Ed255
 
 ## Rabbit Hole — Sister Product
 
-Rabbit Hole is a consumer-facing forensic genealogy tool. Same cryptographic spine as Frame. Different entry point: Frame is for journalists and institutions; Rabbit Hole is for anyone who fell down a rabbit hole at 2am and wanted a map.
+Consumer-facing **depth map**: same verification spine as Frame (`POST /v1/verify-receipt`), different primary UX — narrative in, five runnable layers out, plus pattern/dispute/actor ledger.
 
-Tagline: *There is enough O2 even miles down the Rabbit Hole.*
+**Tagline:** *There is enough O2 even miles down the Rabbit Hole.*
 
-Architecture: six depth layers, each a self-contained information jurisdiction. They stack. They do not bleed into each other. The full spec lives in `docs/RABBIT_HOLE_CONTEXT.md`.
+**Authoritative detail:** `docs/RABBIT_HOLE_CONTEXT.md` (endpoints table, Layer 4 dual path, adapter list, UI components).
 
-### What's built (as of March 25, 2026)
-- `GET /v1/depth-map` — all six layers, sealed floor on Layer 6 (jurisdiction adapters not yet built)
-- `POST /v1/surface` — Layer 1, Anthropic-powered, graceful 503 when credits offline
-- `GET /v1/surface/slenderman` — inoculation baseline, no API key required
-- `POST /v1/pattern-match` — Layer 5, keyword + structural heuristics against signed pattern library
-- `GET /v1/pattern-lib` — full public pattern library with `unsigned_count` transparency field
-- `POST /v1/dispute` — real endpoint, public, append-only dispute log
-- `GET /v1/dispute/{pattern_id}` — public dispute list per pattern
-- `GET /v1/actor/{slug}` + events — append-only actor ledger, Eric Knudsen seeded
-- `POST /v1/verify-receipt` — shared verification endpoint for both Frame and Rabbit Hole receipts
-- `apps/web` depth map UI — six layers rendered, tier badges, sealed floor visual, dispute inline form, Layer X of 6 navigation header
+**Layers 1–5 (shipped):** `POST /v1/surface`, `/v1/spread`, `/v1/origin`, **`/v1/actor-layer`** (full Node stack), `/v1/pattern-match`; **`POST /v1/report`** runs 1–5 in parallel for a single library report. **Report Ring 4** uses the Python **fast path** (`actor_layer_fast`) so production stays fast; **`sources_checked`** marks archive/RSS/Wikidata-class adapters as **`deferred`** — full stack is **`POST /v1/actor-layer`**.
 
-### What's next
-- Fix `apps/web` branding: "Frame · Depth map" → "Rabbit Hole" *(done March 25, 2026)*
-- Add tagline and opening disclaimer to page header *(done March 25, 2026 — copy in `docs/RABBIT_HOLE_CONTEXT.md` § Tone & Voice)*
-- Add Slenderman baseline as pre-populated example on page load
-- Build signing pipeline for actor ledger events (same HALO-ANCHORS pattern)
-- Seed pattern library with 5 historical patterns before any current-events patterns ship
-- Dispute endpoint needs status update endpoint (`PATCH /v1/dispute/{dispute_id}`)
-- Layers 2, 3, 4 adapters not yet built
-- Comparative jurisdiction layer (Layer 6) requires international source adapters
+**Supporting routes:** `GET /v1/depth-map`, `GET /v1/surface/slenderman`, `GET /v1/pattern-lib`, `POST /v1/dispute`, `GET /v1/dispute/{pattern_id}`, `GET/POST /v1/actor/...`.
+
+**Web:** `apps/web` Vite app — `DepthMap` + submit/processing/receipt views, **`sources_checked`** manifest (including **deferred**).
+
+**Layer 6:** Sealed in metadata until jurisdiction adapters exist.
+
+**Next priorities:** See **Known Gaps** (Layer 6, dispute PATCH, optional Slenderman prefill, actor ledger signing polish).
