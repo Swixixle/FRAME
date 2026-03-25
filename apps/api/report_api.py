@@ -15,6 +15,7 @@ from spread_api import run_spread
 from surface_adapter import run_surface_layer
 
 RING_TIMEOUT_SEC = 8.0
+RING_TIMEOUT_ACTOR_SEC = 25.0
 _RING_EXECUTOR = ThreadPoolExecutor(max_workers=12)
 
 
@@ -79,12 +80,14 @@ async def _run_ring_in_executor(
     adapter: str,
     fn: Callable[..., dict[str, Any]],
     *args: Any,
+    timeout_sec: float | None = None,
 ) -> tuple[str, str, dict[str, Any]]:
     """Returns (adapter, run_status, payload). run_status is ok|timeout|error."""
+    limit = RING_TIMEOUT_SEC if timeout_sec is None else timeout_sec
     try:
         payload = await asyncio.wait_for(
             loop.run_in_executor(_RING_EXECUTOR, lambda: fn(*args)),
-            timeout=RING_TIMEOUT_SEC,
+            timeout=limit,
         )
         return adapter, "ok", payload
     except asyncio.TimeoutError:
@@ -92,7 +95,7 @@ async def _run_ring_in_executor(
             adapter,
             "timeout",
             {
-                "error": f"adapter timeout after {RING_TIMEOUT_SEC:.0f}s",
+                "error": f"adapter timeout after {limit:.0f}s",
                 "absent_fields": ["adapter_timeout"],
             },
         )
@@ -114,8 +117,8 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
 
 async def build_extended_report_async(narrative: str) -> dict[str, Any]:
     """
-    Build unsigned ExtendedReportPayload: five rings in parallel (8s cap each), merged unknowns,
-    plus sources_checked (rings + Layer 4 adapter manifest).
+    Build unsigned ExtendedReportPayload: rings in parallel (8s cap surface/spread/origin/pattern;
+    25s cap actor layer), merged unknowns, plus sources_checked (rings + Layer 4 adapter manifest).
     """
     text = narrative.strip()
     now = _now_iso()
@@ -132,7 +135,13 @@ async def build_extended_report_async(narrative: str) -> dict[str, Any]:
         _run_ring_in_executor(loop, "layer_surface", run_surface_layer, {"narrative": text}),
         _run_ring_in_executor(loop, "layer_spread", run_spread, text),
         _run_ring_in_executor(loop, "layer_origin", run_origin, text),
-        _run_ring_in_executor(loop, "layer_actor", run_actor_layer, text),
+        _run_ring_in_executor(
+            loop,
+            "layer_actor",
+            run_actor_layer,
+            text,
+            timeout_sec=RING_TIMEOUT_ACTOR_SEC,
+        ),
         _run_ring_in_executor(loop, "layer_pattern", run_pattern_match, text),
     )
 
@@ -302,7 +311,11 @@ async def build_extended_report_async(narrative: str) -> dict[str, Any]:
             status = "timeout"
             operational.append(
                 {
-                    "text": f"Adapter {adapter} timed out after {RING_TIMEOUT_SEC:.0f}s (operational; report still generated).",
+                    "text": (
+                        f"Adapter {adapter} timed out after "
+                        f"{(RING_TIMEOUT_ACTOR_SEC if adapter == 'layer_actor' else RING_TIMEOUT_SEC):.0f}s "
+                        f"(operational; report still generated)."
+                    ),
                     "resolution_possible": True,
                 }
             )
@@ -330,7 +343,7 @@ async def build_extended_report_async(narrative: str) -> dict[str, Any]:
         if st == "timeout":
             operational.append(
                 {
-                    "text": f"Adapter {ad} timed out in Layer 4 stack after 8s (operational; resolution possible).",
+                    "text": f"Adapter {ad} timed out in Layer 4 stack (operational; resolution possible).",
                     "resolution_possible": True,
                 }
             )

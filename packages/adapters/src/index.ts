@@ -9,6 +9,7 @@ export {
   mergeLayer4Candidates,
   candidateRelevanceScore,
   listDynamicLookupStackCandidates,
+  MAX_DYNAMIC_LOOKUP_CANDIDATES,
 } from "./actor.js";
 export { getPatternDepthLayer, getPatternLayer } from "./pattern.js";
 export { getJurisdictionLayer } from "./jurisdiction.js";

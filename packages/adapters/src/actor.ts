@@ -62,6 +62,26 @@ const RSS_ADAPTER_FN: Record<ParanormalRssLookupSource, (n: string) => Promise<A
   fortean_times: lookupForteanTimes,
 };
 
+/** IA + CA + these RSS first; secondary RSS + JSTOR only if primary batch returns no events. */
+const RSS_PRIMARY: ParanormalRssLookupSource[] = ["mysterious_universe", "coast_to_coast"];
+const RSS_SECONDARY: ParanormalRssLookupSource[] = [
+  "anomalist",
+  "cryptomundo",
+  "singular_fortean",
+  "fortean_times",
+];
+
+function emptyRssRecord(): Record<ParanormalRssLookupSource, ActorEvent[]> {
+  const r = {} as Record<ParanormalRssLookupSource, ActorEvent[]>;
+  for (const k of PARANORMAL_RSS_LOOKUP_SOURCES) {
+    r[k] = [];
+  }
+  return r;
+}
+
+/** Max narrative entities that receive Wikidata / Wikipedia / web + capped archive stack per pass. */
+export const MAX_DYNAMIC_LOOKUP_CANDIDATES = 3;
+
 function mergeCheckStatus(a: SourceCheckedStatus, b: SourceCheckedStatus): SourceCheckedStatus {
   if (a === "found" || b === "found") return "found";
   if (a === "timeout" || b === "timeout") return "timeout";
@@ -133,25 +153,54 @@ type ArchiveStackResult = {
 };
 
 async function runArchiveAndCommunityStack(name: string): Promise<ArchiveStackResult> {
-  const [iaR, caR, jstorR, ...rssTimed] = await Promise.all([
+  const [iaR, caR, ...primaryRss] = await Promise.all([
     runTimed("internet_archive", () => lookupInternetArchive(name)),
     runTimed("chronicling_america", () => lookupChroniclingAmerica(name)),
-    runTimed("jstor", () => lookupJstorOpenAccess(name)),
-    ...PARANORMAL_RSS_LOOKUP_SOURCES.map((k) => runTimed(k, () => RSS_ADAPTER_FN[k](name))),
+    ...RSS_PRIMARY.map((k) => runTimed(k, () => RSS_ADAPTER_FN[k](name))),
   ]);
-  const checks: SourceCheckedEntry[] = [
-    iaR.check,
-    caR.check,
-    jstorR.check,
-    ...rssTimed.map((x) => x.check),
-  ];
-  const rss = Object.fromEntries(
-    PARANORMAL_RSS_LOOKUP_SOURCES.map((k, i) => [k, rssTimed[i]!.events]),
-  ) as Record<ParanormalRssLookupSource, ActorEvent[]>;
+
+  const primaryHits =
+    iaR.events.length +
+    caR.events.length +
+    primaryRss.reduce((s, x) => s + x.events.length, 0);
+
+  const rss = emptyRssRecord();
+  RSS_PRIMARY.forEach((k, i) => {
+    rss[k] = primaryRss[i]!.events;
+  });
+
+  let checks: SourceCheckedEntry[] = [iaR.check, caR.check, ...primaryRss.map((x) => x.check)];
+  let jstorEvents: ActorEvent[] = [];
+
+  if (primaryHits === 0) {
+    const second = await Promise.all([
+      runTimed("jstor", () => lookupJstorOpenAccess(name)),
+      ...RSS_SECONDARY.map((k) => runTimed(k, () => RSS_ADAPTER_FN[k](name))),
+    ]);
+    const jstorR = second[0]!;
+    jstorEvents = jstorR.events;
+    checks = [...checks, jstorR.check, ...second.slice(1).map((x) => x.check)];
+    RSS_SECONDARY.forEach((k, i) => {
+      rss[k] = second[i + 1]!.events;
+    });
+  } else {
+    checks.push(
+      { adapter: "jstor", status: "not_found", detail: "skipped_after_primary_hits" },
+      ...RSS_SECONDARY.map(
+        (k) =>
+          ({
+            adapter: k,
+            status: "not_found",
+            detail: "skipped_after_primary_hits",
+          }) satisfies SourceCheckedEntry,
+      ),
+    );
+  }
+
   return {
     ia: iaR.events,
     ca: caR.events,
-    jstor: jstorR.events,
+    jstor: jstorEvents,
     rss,
     checks,
   };
@@ -1099,7 +1148,12 @@ export function listDynamicLookupStackCandidates(narrative: string): string[] {
     if (candidateRelevanceScore(name, raw) < 2) continue;
     out.push(name);
   }
-  return out.sort((a, b) => a.localeCompare(b));
+  return out
+    .sort((a, b) => {
+      const d = candidateRelevanceScore(b, raw) - candidateRelevanceScore(a, raw);
+      return d !== 0 ? d : a.localeCompare(b);
+    })
+    .slice(0, MAX_DYNAMIC_LOOKUP_CANDIDATES);
 }
 
 /**
@@ -1192,6 +1246,20 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
     throw new Error("narrative is required");
   }
   const candidates = mergeCandidates(raw);
+  const dynamicAllowed = new Set(
+    candidates
+      .filter((name) => {
+        if (tryResolveActorCandidate(name)) return false;
+        if (candidateTokenCount(name) < 2) return false;
+        if (candidateRelevanceScore(name, raw) < 2) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const d = candidateRelevanceScore(b, raw) - candidateRelevanceScore(a, raw);
+        return d !== 0 ? d : a.localeCompare(b);
+      })
+      .slice(0, MAX_DYNAMIC_LOOKUP_CANDIDATES),
+  );
   const foundBySlug = new Map<string, ActorRecord>();
   const actors_absent: ActorLayerResult["actors_absent"] = [];
   let dynamic_lookups = 0;
@@ -1224,6 +1292,11 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
     }
 
     if (candidateRelevanceScore(name, raw) < 2) {
+      actors_absent.push({ name, absent: true, wikidata_attempted: false });
+      continue;
+    }
+
+    if (!dynamicAllowed.has(name)) {
       actors_absent.push({ name, absent: true, wikidata_attempted: false });
       continue;
     }
