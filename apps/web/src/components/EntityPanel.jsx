@@ -1,6 +1,6 @@
 import { useState } from "react";
 import AccordionSection from "./AccordionSection.jsx";
-import { guessEntityType, sourcesByAdapter } from "../utils/receipt.js";
+import { guessEntityType, receiptSignificanceLead, sourcesByAdapter } from "../utils/receipt.js";
 
 export default function EntityPanel({ entityName, receipt, onClose }) {
   const [tableOpen, setTableOpen] = useState(false);
@@ -20,6 +20,8 @@ export default function EntityPanel({ entityName, receipt, onClose }) {
     .map((n) => n.text || n)
     .filter(Boolean)
     .join("\n\n");
+
+  const significanceLead = receiptSignificanceLead(receipt);
 
   const fecStatus =
     fecSources.length > 0
@@ -66,6 +68,12 @@ export default function EntityPanel({ entityName, receipt, onClose }) {
           </div>
         </div>
         <div className="entity-panel-scroll">
+          {significanceLead ? (
+            <div className="receipt-significance-lead entity-panel-significance" role="doc-abstract">
+              <span className="receipt-significance-lead-label">SIGNIFICANCE</span>
+              {significanceLead}
+            </div>
+          ) : null}
           <AccordionSection
             title="FEC Financial Record"
             statusRight={fecStatus}

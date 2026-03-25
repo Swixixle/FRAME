@@ -8,6 +8,12 @@ import type {
 } from "@frame/types";
 import { buildClaim, epiUnknown, getImplicationNote, mergeUnknowns, opUnknown } from "@frame/types";
 
+import {
+  extractSignificanceFromProse,
+  firstSentence,
+  generateFecReceiptNarrative,
+} from "./receipt-narrative.js";
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -146,7 +152,7 @@ export async function buildLiveFecReceipt(
   };
 
   const sources = result.sources;
-  const narrative: Array<{ text: string; sourceId: string }> = [];
+  const templateNarrative: Array<{ text: string; sourceId: string }> = [];
   const totalsSourceId = `fec-totals-${candidateId}`;
 
   if (!sources.find((s) => s.id === totalsSourceId)) {
@@ -164,7 +170,7 @@ export async function buildLiveFecReceipt(
   }
 
   if (allCycleTotals.length === 0) {
-    narrative.push({
+    templateNarrative.push({
       text: `FEC records were queried for candidate ${candidateName} (ID: ${candidateId}) at signing time. No fundraising totals were returned.`,
       sourceId: totalsSourceId,
     });
@@ -173,22 +179,44 @@ export async function buildLiveFecReceipt(
     const careerPac = allCycleTotals.reduce((sum, c) => sum + c.pacContributions, 0);
     const pacPct = careerTotal > 0 ? ((careerPac / careerTotal) * 100).toFixed(1) : "0";
 
-    narrative.push({
+    templateNarrative.push({
       text: `According to FEC records, ${candidateName} (ID: ${candidateId}) raised a total of $${careerTotal.toLocaleString()} across ${allCycleTotals.length} election cycle(s) on record.`,
       sourceId: totalsSourceId,
     });
 
-    narrative.push({
+    templateNarrative.push({
       text: `Of that total, $${careerPac.toLocaleString()} (${pacPct}%) came from PACs and other political committees, with $${(careerTotal - careerPac).toLocaleString()} from individual contributors.`,
       sourceId: totalsSourceId,
     });
 
     const electionCycles = allCycleTotals.filter((c) => c.electionYear === c.cycle);
     for (const c of electionCycles.slice(0, 3)) {
-      narrative.push({
+      templateNarrative.push({
         text: `In the ${c.cycle} election cycle, ${candidateName} raised $${c.receipts.toLocaleString()} total, including $${c.pacContributions.toLocaleString()} from PACs.`,
         sourceId: totalsSourceId,
       });
+    }
+  }
+
+  const joinedTemplate = templateNarrative.map((x) => x.text).join("\n\n");
+  let narrative = templateNarrative;
+  let significance = firstSentence(joinedTemplate);
+
+  if (process.env.ANTHROPIC_API_KEY?.trim()) {
+    try {
+      const gen = await generateFecReceiptNarrative({
+        candidateName,
+        candidateId,
+        hasCycleTotals: allCycleTotals.length > 0,
+        allCycleTotals,
+      });
+      narrative = [{ text: gen.prose, sourceId: totalsSourceId }];
+      significance =
+        gen.significance ||
+        extractSignificanceFromProse(gen.prose) ||
+        significance;
+    } catch (err) {
+      console.error("[buildLiveFecReceipt] Claude receipt narrative failed:", err);
     }
   }
 
@@ -216,6 +244,7 @@ export async function buildLiveFecReceipt(
     ],
     sources,
     narrative,
+    significance,
     unknowns,
     contentHash: "",
   };

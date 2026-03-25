@@ -12,6 +12,7 @@
     }
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
     "@frame/types": "file:../types"
   },
   "files": ["dist"]

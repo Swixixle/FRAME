@@ -3,6 +3,7 @@ import LayerZeroCard from "./LayerZeroCard.jsx";
 import EntityPills from "./EntityPills.jsx";
 import ClaimsList from "./ClaimsList.jsx";
 import EntityPanel from "./EntityPanel.jsx";
+import { receiptSignificanceLead } from "../utils/receipt.js";
 
 function formatReceiptDate(iso) {
   if (!iso || iso === "unknown") return "—";
@@ -76,6 +77,8 @@ export default function ReceiptView({
   }, [claims, receipt.meta]);
 
   const rid = receipt.receiptId || "—";
+
+  const significanceLead = useMemo(() => receiptSignificanceLead(receipt), [receipt]);
 
   const [otherReceiptId, setOtherReceiptId] = useState("");
   const [compareEntity, setCompareEntity] = useState("");
@@ -155,6 +158,12 @@ export default function ReceiptView({
       <div className={`receipt-layout ${activeEntity ? "has-panel" : ""}`}>
         <div className="receipt-main-col">
           <div className="receipt-body-wrap">
+            {significanceLead ? (
+              <div className="receipt-significance-lead" role="doc-abstract">
+                <span className="receipt-significance-lead-label">SIGNIFICANCE</span>
+                {significanceLead}
+              </div>
+            ) : null}
             {lz ? <LayerZeroCard layerZero={lz} loading={false} /> : null}
             <EntityPills
               entities={entities}

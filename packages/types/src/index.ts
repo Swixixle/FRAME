@@ -181,6 +181,11 @@ export interface FrameReceiptPayload {
   sources: SourceRecord[];
   narrative: NarrativeSentence[];
   /**
+   * SIGNIFICANCE section of the receipt narrative, for prominent UI display
+   * (optional; omitted on older receipts).
+   */
+  significance?: string;
+  /**
    * What remains unknown or limited: operational (timeouts, rate limits, missing keys)
    * vs epistemic (intent, causation, absence of proof in public record).
    */

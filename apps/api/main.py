@@ -988,6 +988,10 @@ def _generate_fec_receipt_sync(candidate_id: str) -> dict[str, Any]:
     """
     Build a live FEC receipt for `candidateId` via Node (`buildLiveFecReceipt` + `signReceipt`),
     same pipeline as `scripts/generate-receipt.ts`.
+
+    Receipt prose (FINDINGS / CONTEXT / GAPS / SIGNIFICANCE) is generated in
+    `packages/sources` with Claude Sonnet when `ANTHROPIC_API_KEY` is set; Rabbit Hole
+    Layer 1 surface extraction remains on Haiku in `packages/adapters/src/surface.ts`.
     """
     root = _repo_root()
     script = root / "scripts" / "generate-receipt.ts"

@@ -73,3 +73,25 @@ export function guessEntityType(name) {
 export function sourcesByAdapter(receipt, re) {
   return (receipt.sources || []).filter((s) => re.test(String(s.adapter || "").toLowerCase()));
 }
+
+/** Prominent lead line: `significance` if set, else first sentence of narrative. */
+export function receiptSignificanceLead(receipt) {
+  if (!receipt || typeof receipt !== "object") return "";
+  const s = receipt.significance;
+  if (s != null && String(s).trim()) return String(s).trim();
+  const narr = (receipt.narrative || [])
+    .map((n) => n.text || n)
+    .filter(Boolean)
+    .join(" ");
+  return firstSentenceFromProse(narr);
+}
+
+function firstSentenceFromProse(text) {
+  const t = (text || "").trim();
+  if (!t) return "";
+  const m = t.match(/^[^.!?]+[.!?](?=\s|$)/);
+  if (m) return m[0].trim();
+  const idx = t.search(/[.!?](?:\s|$)/);
+  if (idx === -1) return t.slice(0, 280).trim();
+  return t.slice(0, idx + 1).trim();
+}
