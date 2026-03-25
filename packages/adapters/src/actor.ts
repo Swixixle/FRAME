@@ -2,10 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   ActorEvent,
   ActorLookupSource,
+  ActorSourceCategory,
   DepthLayer,
   ActorLayerResult,
   ActorRecord,
   ParanormalRssLookupSource,
+  SourceCheckedEntry,
+  SourceCheckedStatus,
 } from "@frame/types";
 import { PARANORMAL_RSS_LOOKUP_SOURCES } from "@frame/types";
 import { ConfidenceTier, DEPTH_LAYER_ACTOR } from "@frame/types";
@@ -17,6 +20,7 @@ import { lookupCryptomundo } from "./sources/cryptomundo.js";
 import { lookupCoastToCoast } from "./sources/coast-to-coast.js";
 import { lookupSingularFortean } from "./sources/singular-fortean.js";
 import { lookupForteanTimes } from "./sources/fortean-times.js";
+import { lookupJstorOpenAccess } from "./sources/jstor.js";
 import {
   findActorByExactNameOrAlias,
   getActor,
@@ -33,37 +37,127 @@ export async function getActorDepthLayer(): Promise<DepthLayer> {
 
 const WD_API = "https://www.wikidata.org/w/api.php";
 const UA = "FrameActorLayer/1.0 (https://github.com/Swixixle/FRAME)";
+const ADAPTER_MS = 8000;
 
-const SURFACE_MODEL_DEFAULT_CHAIN = ["claude-haiku-4-5", "claude-3-haiku-20240307"] as const;
-
-/** Shared promises so archives + paranormal RSS run in parallel with Wikidata / Wikipedia / web. */
-export type ParallelActorStackPromises = {
-  ia: Promise<ActorEvent[]>;
-  ca: Promise<ActorEvent[]>;
-  rss: Record<ParanormalRssLookupSource, Promise<ActorEvent[]>>;
+type WbSnak = {
+  snaktype?: string;
+  datavalue?: { type?: string; value?: unknown };
+};
+type WbStatement = {
+  mainsnak?: WbSnak;
+  references?: Array<{ snaks?: Record<string, WbSnak[]> }>;
+};
+type WbEntityBody = {
+  descriptions?: { en?: { value?: string } };
+  sitelinks?: { enwiki?: { title?: string } };
+  claims?: Record<string, WbStatement[]>;
 };
 
-function startRssPromises(name: string): Record<ParanormalRssLookupSource, Promise<ActorEvent[]>> {
+const RSS_ADAPTER_FN: Record<ParanormalRssLookupSource, (n: string) => Promise<ActorEvent[]>> = {
+  mysterious_universe: lookupMysteriousUniverse,
+  anomalist: lookupAnomalist,
+  cryptomundo: lookupCryptomundo,
+  coast_to_coast: lookupCoastToCoast,
+  singular_fortean: lookupSingularFortean,
+  fortean_times: lookupForteanTimes,
+};
+
+function mergeCheckStatus(a: SourceCheckedStatus, b: SourceCheckedStatus): SourceCheckedStatus {
+  if (a === "found" || b === "found") return "found";
+  if (a === "timeout" || b === "timeout") return "timeout";
+  if (a === "error" || b === "error") return "error";
+  return "not_found";
+}
+
+function isTimeoutErr(e: unknown): boolean {
+  return Boolean(e && typeof e === "object" && (e as { code?: string }).code === "timeout");
+}
+
+function sleepReject(ms: number): Promise<never> {
+  return new Promise((_, rej) =>
+    setTimeout(() => rej(Object.assign(new Error("timeout"), { code: "timeout" })), ms),
+  );
+}
+
+async function runTimed(
+  adapter: string,
+  fn: () => Promise<ActorEvent[]>,
+): Promise<{ events: ActorEvent[]; check: SourceCheckedEntry }> {
+  try {
+    const events = await Promise.race([fn(), sleepReject(ADAPTER_MS)]);
+    return {
+      events,
+      check: { adapter, status: events.length > 0 ? "found" : "not_found" },
+    };
+  } catch (e: unknown) {
+    return {
+      events: [],
+      check: {
+        adapter,
+        status: isTimeoutErr(e) ? "timeout" : "error",
+        detail: isTimeoutErr(e) ? undefined : String(e),
+      },
+    };
+  }
+}
+
+async function runTimedRecord(
+  adapter: string,
+  fn: () => Promise<ActorRecord | null>,
+): Promise<{ record: ActorRecord | null; check: SourceCheckedEntry }> {
+  try {
+    const record = await Promise.race([fn(), sleepReject(ADAPTER_MS)]);
+    const found = record != null;
+    return {
+      record,
+      check: { adapter, status: found ? "found" : "not_found" },
+    };
+  } catch (e: unknown) {
+    return {
+      record: null,
+      check: {
+        adapter,
+        status: isTimeoutErr(e) ? "timeout" : "error",
+        detail: isTimeoutErr(e) ? undefined : String(e),
+      },
+    };
+  }
+}
+
+type ArchiveStackResult = {
+  ia: ActorEvent[];
+  ca: ActorEvent[];
+  jstor: ActorEvent[];
+  rss: Record<ParanormalRssLookupSource, ActorEvent[]>;
+  checks: SourceCheckedEntry[];
+};
+
+async function runArchiveAndCommunityStack(name: string): Promise<ArchiveStackResult> {
+  const [iaR, caR, jstorR, ...rssTimed] = await Promise.all([
+    runTimed("internet_archive", () => lookupInternetArchive(name)),
+    runTimed("chronicling_america", () => lookupChroniclingAmerica(name)),
+    runTimed("jstor", () => lookupJstorOpenAccess(name)),
+    ...PARANORMAL_RSS_LOOKUP_SOURCES.map((k) => runTimed(k, () => RSS_ADAPTER_FN[k](name))),
+  ]);
+  const checks: SourceCheckedEntry[] = [
+    iaR.check,
+    caR.check,
+    jstorR.check,
+    ...rssTimed.map((x) => x.check),
+  ];
+  const rss = Object.fromEntries(
+    PARANORMAL_RSS_LOOKUP_SOURCES.map((k, i) => [k, rssTimed[i]!.events]),
+  ) as Record<ParanormalRssLookupSource, ActorEvent[]>;
   return {
-    mysterious_universe: lookupMysteriousUniverse(name),
-    anomalist: lookupAnomalist(name),
-    cryptomundo: lookupCryptomundo(name),
-    coast_to_coast: lookupCoastToCoast(name),
-    singular_fortean: lookupSingularFortean(name),
-    fortean_times: lookupForteanTimes(name),
+    ia: iaR.events,
+    ca: caR.events,
+    jstor: jstorR.events,
+    rss,
+    checks,
   };
 }
 
-async function awaitRssEvents(
-  rss: Record<ParanormalRssLookupSource, Promise<ActorEvent[]>>,
-): Promise<Record<ParanormalRssLookupSource, ActorEvent[]>> {
-  const keys = [...PARANORMAL_RSS_LOOKUP_SOURCES];
-  const lists = await Promise.all(keys.map((k) => rss[k]));
-  return Object.fromEntries(keys.map((k, i) => [k, lists[i]])) as Record<
-    ParanormalRssLookupSource,
-    ActorEvent[]
-  >;
-}
+const SURFACE_MODEL_DEFAULT_CHAIN = ["claude-haiku-4-5", "claude-3-haiku-20240307"] as const;
 
 function withLedgerPrimaryCategory(rec: ActorRecord): ActorRecord {
   const sources = rec.lookup_source ?? [];
@@ -77,25 +171,19 @@ function withLedgerPrimaryCategory(rec: ActorRecord): ActorRecord {
   };
 }
 
-function mergeExternalStacks(
-  rec: ActorRecord,
-  stacks: {
-    ia: ActorEvent[];
-    ca: ActorEvent[];
-    rss: Record<ParanormalRssLookupSource, ActorEvent[]>;
-  },
-): ActorRecord {
+function mergeExternalStacks(rec: ActorRecord, stacks: ArchiveStackResult): ActorRecord {
   const base: ActorLookupSource[] = rec.lookup_source ? [...rec.lookup_source] : [];
   const mark = (events: ActorEvent[], src: ActorLookupSource) => {
     if (events.length && !base.includes(src)) base.push(src);
   };
   mark(stacks.ia, "internet_archive");
   mark(stacks.ca, "chronicling_america");
+  mark(stacks.jstor, "jstor");
   for (const k of PARANORMAL_RSS_LOOKUP_SOURCES) {
     mark(stacks.rss[k], k);
   }
   const rssExtra = PARANORMAL_RSS_LOOKUP_SOURCES.flatMap((k) => stacks.rss[k]);
-  const extra = [...stacks.ia, ...stacks.ca, ...rssExtra];
+  const extra = [...stacks.ia, ...stacks.ca, ...stacks.jstor, ...rssExtra];
   if (extra.length === 0) {
     return { ...rec, lookup_source: base };
   }
@@ -164,6 +252,261 @@ function formatWikidataTime(raw: { time?: string; precision?: number } | undefin
   return `${yStr}-${mo}-${da}`;
 }
 
+function hostLine(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return url.slice(0, 160);
+  }
+}
+
+function sourceCategoryFromExternalUrl(url: string): ActorSourceCategory {
+  const u = url.toLowerCase();
+  if (
+    /jstor\.org|\.edu\/|scholar\.google|doi\.org|ncbi\.nlm|arxiv\.org|oecd\.org\/library/.test(u)
+  ) {
+    return "academic";
+  }
+  if (
+    /cryptomundo|coasttocoastam|forteantimes|mysteriousuniverse|anomalist\.com|singularfortean/.test(
+      u,
+    )
+  ) {
+    return "paranormal_community";
+  }
+  return "primary_historical";
+}
+
+function commonsFilePageUrl(filename: string): string {
+  const enc = filename.replace(/ /g, "_");
+  return `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(enc)}`;
+}
+
+function snakUrl(v: unknown): string | null {
+  if (typeof v !== "string" || !/^https?:\/\//i.test(v)) return null;
+  return v;
+}
+
+function collectWikidataLinkedUrls(entity: WbEntityBody): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (u: string | null) => {
+    if (!u) return;
+    const t = u.trim();
+    if (!seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  };
+  const p856 = entity.claims?.P856;
+  for (const st of p856 ?? []) {
+    const v = st.mainsnak?.datavalue?.value;
+    push(snakUrl(v));
+  }
+  const p953 = entity.claims?.P953;
+  for (const st of p953 ?? []) {
+    const v = st.mainsnak?.datavalue?.value;
+    push(snakUrl(v));
+  }
+  const p18 = entity.claims?.P18;
+  for (const st of p18 ?? []) {
+    const v = st.mainsnak?.datavalue?.value;
+    if (typeof v === "string" && v.trim()) {
+      push(commonsFilePageUrl(v.trim()));
+    }
+  }
+  for (const pid of Object.keys(entity.claims ?? {})) {
+    for (const stmt of entity.claims?.[pid] ?? []) {
+      for (const ref of stmt.references ?? []) {
+        for (const snak of ref.snaks?.P854 ?? []) {
+          const v = snak.datavalue?.value;
+          push(snakUrl(v));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function shouldExcludeExtLink(url: string): boolean {
+  const u = url.toLowerCase();
+  return (
+    /geohack\.toolforge\.org/.test(u) ||
+    /google\.com\/search/.test(u) ||
+    /wiktionary\.org/.test(u) ||
+    /\/wiki\/geohack/i.test(u)
+  );
+}
+
+async function resolveEnglishWikipediaTitle(q: string): Promise<string | null> {
+  const trimmed = q.trim();
+  if (trimmed.length < 2) return null;
+  const us = trimmed.replace(/\s+/g, "_");
+  try {
+    const sum = await fetch(
+      `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(us)}`,
+      { headers: { "User-Agent": UA } },
+    );
+    if (sum.ok) {
+      const d = (await sum.json()) as { type?: string; title?: string };
+      if (d.type !== "disambiguation" && d.title) {
+        return d.title.replace(/ /g, "_");
+      }
+    }
+  } catch {
+    /* continue to search */
+  }
+  const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(trimmed)}&srlimit=3&format=json`;
+  try {
+    const ar = await fetch(searchUrl, { headers: { "User-Agent": UA } });
+    if (!ar.ok) return null;
+    const ad = (await ar.json()) as {
+      query?: { search?: Array<{ title?: string }> };
+    };
+    const hit = ad.query?.search?.[0]?.title;
+    return hit ? hit.replace(/ /g, "_") : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWikipediaExtlinks(titleUnderscores: string): Promise<string[]> {
+  const t = titleUnderscores.trim();
+  if (t.length < 1) return [];
+  const api =
+    `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(t)}` +
+    `&prop=extlinks&ellimit=45&format=json`;
+  try {
+    const r = await fetch(api, { headers: { "User-Agent": UA } });
+    if (!r.ok) return [];
+    const d = (await r.json()) as {
+      query?: { pages?: Record<string, { extlinks?: Array<{ "*": string }> }> };
+    };
+    const pages = d.query?.pages ?? {};
+    const page = Object.values(pages)[0] as { extlinks?: Array<{ "*": string }> } | undefined;
+    const links = (page?.extlinks ?? []).map((x) => x["*"]).filter(Boolean);
+    return links.filter((u) => !shouldExcludeExtLink(u)).slice(0, 10);
+  } catch {
+    return [];
+  }
+}
+
+function dedupeStrings(xs: string[]): string[] {
+  return [...new Set(xs.map((x) => x.trim()).filter(Boolean))];
+}
+
+function normalizeSourceKey(s: string): string {
+  const t = s.trim().toLowerCase();
+  if (/^https?:\/\//i.test(t)) {
+    try {
+      const u = new URL(t);
+      return `${u.hostname}${u.pathname}`.toLowerCase();
+    } catch {
+      return t;
+    }
+  }
+  return t;
+}
+
+function dedupeEventsBySourceUrl(events: ActorEvent[]): ActorEvent[] {
+  const seen = new Set<string>();
+  const out: ActorEvent[] = [];
+  for (const e of events) {
+    const key = normalizeSourceKey(e.source || e.description);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(e);
+  }
+  return out;
+}
+
+function dedupeLookupSources(sources: ActorLookupSource[]): ActorLookupSource[] {
+  return [...new Set(sources)];
+}
+
+function mergeDynamicParallelRecords(
+  wd: ActorRecord | null,
+  wp: ActorRecord | null,
+  web: ActorRecord | null,
+): ActorRecord | null {
+  if (!wd && !wp && !web) return null;
+  const name = wd?.name ?? wp?.name ?? web?.name ?? "";
+  const slug =
+    wd?.slug ??
+    wp?.slug ??
+    web?.slug ??
+    `dyn-${actorNameToSlug(name)}-${shortHash(name)}`;
+  return {
+    slug,
+    name,
+    aliases: dedupeStrings([...(wd?.aliases ?? []), ...(wp?.aliases ?? []), ...(web?.aliases ?? [])]),
+    lookup_source: dedupeLookupSources([
+      ...(wd?.lookup_source ?? []),
+      ...(wp?.lookup_source ?? []),
+      ...(web?.lookup_source ?? []),
+    ]),
+    wikidata_id: wd?.wikidata_id,
+    wikipedia_title: wp?.wikipedia_title ?? wd?.wikipedia_title,
+    events: dedupeEventsBySourceUrl([
+      ...(wd?.events ?? []),
+      ...(wp?.events ?? []),
+      ...(web?.events ?? []),
+    ]),
+  };
+}
+
+async function runParallelResolvers(name: string): Promise<{
+  records: { wd: ActorRecord | null; wp: ActorRecord | null; web: ActorRecord | null };
+  checks: SourceCheckedEntry[];
+}> {
+  const [wdR, wpR, webR] = await Promise.all([
+    runTimedRecord("wikidata", () => lookupWikidata(name)),
+    runTimedRecord("wikipedia_refs", () => lookupWikipediaCitedUrls(name)),
+    runTimedRecord("web_inference", () => lookupWeb(name)),
+  ]);
+  return {
+    records: { wd: wdR.record, wp: wpR.record, web: webR.record },
+    checks: [wdR.check, wpR.check, webR.check],
+  };
+}
+
+async function resolveDynamicWithStack(
+  name: string,
+  stack: ArchiveStackResult,
+): Promise<{ record: ActorRecord | null; resolverChecks: SourceCheckedEntry[] }> {
+  const { records, checks: resolverChecks } = await runParallelResolvers(name);
+  let main = mergeDynamicParallelRecords(records.wd, records.wp, records.web);
+  if (main) {
+    main = await enrichDynamicRecordWithSurface(main);
+    return {
+      record: mergeExternalStacks(main, stack),
+      resolverChecks,
+    };
+  }
+  const rssExtra = PARANORMAL_RSS_LOOKUP_SOURCES.flatMap((k) => stack.rss[k]);
+  const stacked = [...stack.ia, ...stack.ca, ...stack.jstor, ...rssExtra];
+  if (stacked.length === 0) {
+    return { record: null, resolverChecks };
+  }
+  const lookup_source: ActorLookupSource[] = [];
+  if (stack.ia.length) lookup_source.push("internet_archive");
+  if (stack.ca.length) lookup_source.push("chronicling_america");
+  if (stack.jstor.length) lookup_source.push("jstor");
+  for (const k of PARANORMAL_RSS_LOOKUP_SOURCES) {
+    if (stack.rss[k].length) lookup_source.push(k);
+  }
+  return {
+    record: {
+      slug: `hist-${actorNameToSlug(name)}-${shortHash(name)}`,
+      name,
+      aliases: [],
+      lookup_source,
+      events: stacked,
+    },
+    resolverChecks,
+  };
+}
+
 /** Opening paragraph from English Wikipedia REST summary (underscores in path). */
 async function fetchWikipediaPageExtract(titleUnderscores: string): Promise<string | null> {
   const t = titleUnderscores.trim();
@@ -220,6 +563,7 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
     const entUrl = `${WD_API}?action=wbgetentities&ids=${id}&languages=en&props=claims|descriptions|labels|sitelinks&format=json`;
     const er = await fetch(entUrl, { headers: { "User-Agent": UA } });
     let wikipedia_title: string | undefined;
+    let refEvents: ActorEvent[] = [];
     if (er.ok) {
       const ed = (await er.json()) as {
         entities?: Record<
@@ -234,7 +578,7 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
           }
         >;
       };
-      const entity = ed.entities?.[id];
+      const entity = ed.entities?.[id] as WbEntityBody | undefined;
       if (entity?.descriptions?.en?.value) {
         description = entity.descriptions.en.value;
       }
@@ -246,9 +590,28 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
         | { time?: string; precision?: number }
         | undefined;
       dateStr = formatWikidataTime(p571);
+      if (entity) {
+        const linked = collectWikidataLinkedUrls(entity);
+        refEvents = linked.slice(0, 24).map((url) => ({
+          date: dateStr || "unknown",
+          type: "wikidata_reference_url",
+          description: `${hostLine(url)} — URL from Wikidata statements or reference qualifiers (P854, P856, P953, P18)`,
+          source: url,
+          confidence_tier: ConfidenceTier.SingleSource,
+          source_category: sourceCategoryFromExternalUrl(url),
+        }));
+      }
     }
 
-    const descFinal = description || `Wikidata entity ${id} (${label})`;
+    const anchor: ActorEvent = {
+      date: dateStr || "unknown",
+      type: "wikidata_anchor",
+      description: `${label} — Wikidata ${id}: resolver row only; separate events carry linked URLs.`,
+      source: `https://www.wikidata.org/wiki/${id}`,
+      confidence_tier: ConfidenceTier.SingleSource,
+      source_category: "dynamic_inference",
+    };
+
     return {
       slug: `wd-${id.toLowerCase()}`,
       name: label,
@@ -256,65 +619,45 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
       lookup_source: ["wikidata"],
       wikidata_id: id,
       wikipedia_title,
-      events: [
-        {
-          date: dateStr || "unknown",
-          type: "wikidata_entity",
-          description: descFinal,
-          source: "Wikidata — dynamically retrieved, not hand-verified",
-          confidence_tier: ConfidenceTier.SingleSource,
-          source_category: "dynamic_inference",
-        },
-      ],
+      events: [...refEvents, anchor],
     };
   } catch {
     return null;
   }
 }
 
-/** English Wikipedia REST summary (first matching title). */
-export async function lookupWikipedia(name: string): Promise<ActorRecord | null> {
+/** English Wikipedia: surface external links (extlinks API), not article body as citation. */
+export async function lookupWikipediaCitedUrls(name: string): Promise<ActorRecord | null> {
   const q = name.trim();
   if (q.length < 2) return null;
-  const titleUnderscore = q.replace(/\s+/g, "_");
-  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(titleUnderscore)}`;
-  try {
-    const r = await fetch(url, { headers: { "User-Agent": UA } });
-    if (r.status === 404) return null;
-    if (!r.ok) return null;
-    const data = (await r.json()) as {
-      type?: string;
-      title?: string;
-      extract?: string;
-    };
-    if (data.type === "disambiguation") return null;
-    const extract = (data.extract ?? "").trim();
-    if (!extract) return null;
-    const pageTitle = data.title ?? q.replace(/_/g, " ");
-    const titleForUrl = pageTitle.replace(/ /g, "_");
-    const yearMatch = extract.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
-    const dateStr = yearMatch ? `${yearMatch[1]}-01-01` : "unknown";
-    const slug = `wiki-${actorNameToSlug(pageTitle)}`;
+  const title = await resolveEnglishWikipediaTitle(q);
+  if (!title) return null;
+  const urls = await fetchWikipediaExtlinks(title);
+  if (urls.length === 0) return null;
+  const pageTitle = title.replace(/_/g, " ");
+  const events: ActorEvent[] = urls.map((url) => {
+    const ym = url.match(/\b(1[0-9]{3}|20[0-9]{2})\b/);
     return {
-      slug,
-      name: pageTitle,
-      aliases: [],
-      lookup_source: ["wikipedia"],
-      wikipedia_title: titleForUrl,
-      events: [
-        {
-          date: dateStr,
-          type: "wikipedia_summary",
-          description: extract.slice(0, 1200),
-          source: "Wikipedia REST summary — dynamically retrieved, not hand-verified",
-          confidence_tier: ConfidenceTier.SingleSource,
-          source_category: "dynamic_inference",
-        },
-      ],
+      date: ym ? `${ym[1]}-01-01` : "unknown",
+      type: "wikipedia_reference_url",
+      description: `${hostLine(url)} — external link from Wikipedia extlinks API (article text not used as citation)`,
+      source: url,
+      confidence_tier: ConfidenceTier.SingleSource,
+      source_category: sourceCategoryFromExternalUrl(url),
     };
-  } catch {
-    return null;
-  }
+  });
+  return {
+    slug: `wiki-ref-${actorNameToSlug(pageTitle)}`,
+    name: pageTitle,
+    aliases: q.toLowerCase() !== pageTitle.toLowerCase() ? [q] : [],
+    lookup_source: ["wikipedia"],
+    wikipedia_title: title,
+    events,
+  };
+}
+
+export async function lookupWikipedia(name: string): Promise<ActorRecord | null> {
+  return lookupWikipediaCitedUrls(name);
 }
 
 async function anthropicJsonCompletion(prompt: string): Promise<string | null> {
@@ -403,17 +746,32 @@ export async function lookupWeb(name: string): Promise<ActorRecord | null> {
  */
 async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRecord> {
   const sources = rec.lookup_source ?? [];
-  if (!sources.includes("wikidata") && !sources.includes("wikipedia")) {
-    return rec;
-  }
-  const wikidataOneLiner = (rec.events[0]?.description ?? "").trim();
-  let anchorNarrative = `${rec.name} — ${wikidataOneLiner}`.trim();
+  const needsSurface = sources.some((s) =>
+    ["wikidata", "wikipedia", "web_inference"].includes(s),
+  );
+  if (!needsSurface) return rec;
+
+  const primaryHints = rec.events
+    .filter(
+      (e) =>
+        e.source_category === "primary_historical" ||
+        e.source_category === "academic" ||
+        e.type === "wikipedia_reference_url" ||
+        e.type === "wikidata_reference_url",
+    )
+    .map((e) => e.description)
+    .filter(Boolean)
+    .slice(0, 8);
+  const anchorHint =
+    (rec.events.find((e) => e.type === "wikidata_anchor")?.description ?? "").trim();
+  const parts = [rec.name, ...primaryHints, anchorHint].filter(Boolean);
+  let anchorNarrative = parts.join(" ").replace(/\s+/g, " ").trim();
   if (anchorNarrative.length > 0 && !anchorNarrative.endsWith(".")) {
     anchorNarrative += ".";
   }
 
   let usedWikipediaExtract = false;
-  if (sources.includes("wikidata")) {
+  if (sources.includes("wikidata") || sources.includes("wikipedia")) {
     const titleForRest =
       rec.wikipedia_title?.trim() || rec.name.replace(/\s+/g, "_");
     const wpExtract = await fetchWikipediaPageExtract(titleForRest);
@@ -430,11 +788,11 @@ async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRe
     const anchorSource =
       sources.includes("wikidata") && rec.wikidata_id
         ? usedWikipediaExtract
-          ? `Wikidata (${rec.wikidata_id}) + English Wikipedia extract; Layer 1 surface extraction`
-          : `Wikidata anchor (${rec.wikidata_id}); Layer 1 surface extraction`
+          ? `Resolver Wikidata ${rec.wikidata_id} + English Wikipedia extract (tertiary context only); Layer 1 surface extraction`
+          : `Resolver Wikidata ${rec.wikidata_id}; Layer 1 surface extraction`
         : sources.includes("wikipedia") && rec.wikipedia_title
-          ? `Wikipedia anchor (${rec.wikipedia_title}); Layer 1 surface extraction`
-          : "External anchor; Layer 1 surface extraction";
+          ? `Resolver Wikipedia title ${rec.wikipedia_title} (extlinks / tertiary context); Layer 1 surface extraction`
+          : "External resolver anchor; Layer 1 surface extraction";
     return {
       ...rec,
       what: surface.what,
@@ -443,6 +801,7 @@ async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRe
       surface_who: surface.who,
       surface_when: surface.when,
       events: [
+        ...rec.events,
         {
           date: rec.events[0]?.date ?? "unknown",
           type: "layer1_trace",
@@ -459,57 +818,13 @@ async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRe
 }
 
 /**
- * Wikidata → Wikipedia → web inference, merged with Internet Archive, Chronicling America,
- * and paranormal RSS (shared promises from `getActorLayer` keep fetches parallel).
+ * Full parallel stack (archives + community RSS + resolvers) for a single extracted name.
+ * Convenience export for scripts; `getActorLayer` uses `resolveDynamicWithStack` to avoid duplicate fetches.
  */
-export async function dynamicLookupChain(
-  name: string,
-  parallel?: Partial<ParallelActorStackPromises>,
-): Promise<ActorRecord | null> {
-  const iaP = parallel?.ia ?? lookupInternetArchive(name);
-  const caP = parallel?.ca ?? lookupChroniclingAmerica(name);
-  const rssP = parallel?.rss ?? startRssPromises(name);
-
-  const wd = await lookupWikidata(name);
-  let main: ActorRecord | null = null;
-  if (wd) main = await enrichDynamicRecordWithSurface(wd);
-  else {
-    const wp = await lookupWikipedia(name);
-    if (wp) main = await enrichDynamicRecordWithSurface(wp);
-    else main = await lookupWeb(name);
-  }
-
-  const [iaEvents, caEvents, rssEvents] = await Promise.all([
-    iaP,
-    caP,
-    awaitRssEvents(rssP),
-  ]);
-  if (!main) {
-    const stacked = [
-      ...iaEvents,
-      ...caEvents,
-      ...PARANORMAL_RSS_LOOKUP_SOURCES.flatMap((k) => rssEvents[k]),
-    ];
-    if (stacked.length === 0) return null;
-    const lookup_source: ActorLookupSource[] = [];
-    if (iaEvents.length) lookup_source.push("internet_archive");
-    if (caEvents.length) lookup_source.push("chronicling_america");
-    for (const k of PARANORMAL_RSS_LOOKUP_SOURCES) {
-      if (rssEvents[k].length) lookup_source.push(k);
-    }
-    return {
-      slug: `hist-${actorNameToSlug(name)}-${shortHash(name)}`,
-      name,
-      aliases: [],
-      lookup_source,
-      events: stacked,
-    };
-  }
-  return mergeExternalStacks(main, {
-    ia: iaEvents,
-    ca: caEvents,
-    rss: rssEvents,
-  });
+export async function dynamicLookupChain(name: string): Promise<ActorRecord | null> {
+  const stack = await runArchiveAndCommunityStack(name);
+  const { record } = await resolveDynamicWithStack(name, stack);
+  return record;
 }
 
 function actorSlugCandidates(name: string): string[] {
@@ -647,32 +962,31 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
   const foundBySlug = new Map<string, ActorRecord>();
   const actors_absent: ActorLayerResult["actors_absent"] = [];
   let dynamic_lookups = 0;
+  const checkAgg = new Map<string, SourceCheckedStatus>();
+
+  const addChecks = (entries: SourceCheckedEntry[]) => {
+    for (const e of entries) {
+      const prev = checkAgg.get(e.adapter);
+      checkAgg.set(e.adapter, prev ? mergeCheckStatus(prev, e.status) : e.status);
+    }
+  };
 
   for (const name of candidates) {
-    const iaP = lookupInternetArchive(name);
-    const caP = lookupChroniclingAmerica(name);
-    const rssP = startRssPromises(name);
+    const stack = await runArchiveAndCommunityStack(name);
+    addChecks(stack.checks);
     const ledgerRec = tryResolveActorCandidate(name);
     if (ledgerRec) {
-      const [iaEvents, caEvents, rssEvents] = await Promise.all([
-        iaP,
-        caP,
-        awaitRssEvents(rssP),
-      ]);
-      const rec = mergeExternalStacks(ledgerRec, {
-        ia: iaEvents,
-        ca: caEvents,
-        rss: rssEvents,
-      });
+      const rec = mergeExternalStacks(ledgerRec, stack);
       if (!foundBySlug.has(rec.slug)) {
         foundBySlug.set(rec.slug, rec);
       }
     } else {
-      const dyn = await dynamicLookupChain(name, { ia: iaP, ca: caP, rss: rssP });
-      if (dyn) {
+      const { record, resolverChecks } = await resolveDynamicWithStack(name, stack);
+      addChecks(resolverChecks);
+      if (record) {
         dynamic_lookups++;
-        if (!foundBySlug.has(dyn.slug)) {
-          foundBySlug.set(dyn.slug, dyn);
+        if (!foundBySlug.has(record.slug)) {
+          foundBySlug.set(record.slug, record);
         }
       } else {
         actors_absent.push({ name, absent: true, wikidata_attempted: true });
@@ -691,11 +1005,16 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
     actors_absent.length,
   );
 
+  const sources_checked = [...checkAgg.entries()]
+    .map(([adapter, status]) => ({ adapter, status }))
+    .sort((a, b) => a.adapter.localeCompare(b.adapter));
+
   return {
     actors_found,
     actors_absent,
     confidence_tier,
     absent_fields,
     dynamic_lookups,
+    sources_checked,
   };
 }

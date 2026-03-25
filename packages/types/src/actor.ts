@@ -28,6 +28,7 @@ export type ActorLookupSource =
   | "web_inference"
   | "internet_archive"
   | "chronicling_america"
+  | "jstor"
   | "mysterious_universe"
   | "anomalist"
   | "cryptomundo"

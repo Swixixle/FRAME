@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -11,6 +13,9 @@ from origin_api import run_origin
 from pattern_api import run_pattern_match
 from spread_api import run_spread
 from surface_adapter import run_surface_layer
+
+RING_TIMEOUT_SEC = 8.0
+_RING_EXECUTOR = ThreadPoolExecutor(max_workers=12)
 
 
 def _now_iso() -> str:
@@ -33,38 +38,109 @@ def _source(
     }
 
 
-def _safe_run(
+def _merge_source_check_status(a: str, b: str) -> str:
+    if a == "found" or b == "found":
+        return "found"
+    if a == "timeout" or b == "timeout":
+        return "timeout"
+    if a == "error" or b == "error":
+        return "error"
+    return "not_found"
+
+
+def _classify_ring_adapter_status(adapter: str, data: dict[str, Any]) -> str:
+    if data.get("error"):
+        return "error"
+    if adapter == "layer_surface":
+        if (str(data.get("what") or "").strip()) or (data.get("media_claims") or []):
+            return "found"
+        return "not_found"
+    if adapter == "layer_spread":
+        if (data.get("spread_indicators") or []) or (data.get("platforms_mentioned") or []):
+            return "found"
+        return "not_found"
+    if adapter == "layer_origin":
+        if (data.get("first_instance_indicators") or []) or (data.get("seeding_actors") or []):
+            return "found"
+        return "not_found"
+    if adapter == "layer_actor":
+        if data.get("actors_found") or (data.get("dynamic_lookups") or 0) > 0:
+            return "found"
+        return "not_found"
+    if adapter == "layer_pattern":
+        if data.get("matches"):
+            return "found"
+        return "not_found"
+    return "not_found"
+
+
+async def _run_ring_in_executor(
+    loop: asyncio.AbstractEventLoop,
+    adapter: str,
     fn: Callable[..., dict[str, Any]],
     *args: Any,
-) -> tuple[dict[str, Any], list[str]]:
+) -> tuple[str, str, dict[str, Any]]:
+    """Returns (adapter, run_status, payload). run_status is ok|timeout|error."""
     try:
-        data = fn(*args)
-        absent = list(data.get("absent_fields") or [])
-        return data, absent
-    except Exception as exc:
-        err = str(exc)
+        payload = await asyncio.wait_for(
+            loop.run_in_executor(_RING_EXECUTOR, lambda: fn(*args)),
+            timeout=RING_TIMEOUT_SEC,
+        )
+        return adapter, "ok", payload
+    except asyncio.TimeoutError:
         return (
+            adapter,
+            "timeout",
             {
-                "error": err,
+                "error": f"adapter timeout after {RING_TIMEOUT_SEC:.0f}s",
+                "absent_fields": ["adapter_timeout"],
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — surface to report unknowns
+        return (
+            adapter,
+            "error",
+            {
+                "error": str(exc),
                 "absent_fields": ["adapter_failed"],
             },
-            ["adapter_failed"],
         )
 
 
 def build_extended_report(narrative: str) -> dict[str, Any]:
+    """Sync wrapper for tests / callers; runs async implementation in one event loop."""
+    return asyncio.run(build_extended_report_async(narrative))
+
+
+async def build_extended_report_async(narrative: str) -> dict[str, Any]:
     """
-    Build unsigned ExtendedReportPayload: five rings, merged unknowns, provenance rows per ring.
+    Build unsigned ExtendedReportPayload: five rings in parallel (8s cap each), merged unknowns,
+    plus sources_checked (rings + Layer 4 adapter manifest).
     """
     text = narrative.strip()
     now = _now_iso()
     rid = str(uuid.uuid4())
+    loop = asyncio.get_running_loop()
 
-    surface, surface_absent = _safe_run(run_surface_layer, {"narrative": text})
-    spread, spread_absent = _safe_run(run_spread, text)
-    origin, origin_absent = _safe_run(run_origin, text)
-    actor, actor_absent = _safe_run(run_actor_layer, text)
-    pattern, pattern_absent = _safe_run(run_pattern_match, text)
+    (
+        (ad_surface, st_surface, surface),
+        (ad_spread, st_spread, spread),
+        (ad_origin, st_origin, origin),
+        (ad_actor, st_actor, actor),
+        (ad_pattern, st_pattern, pattern),
+    ) = await asyncio.gather(
+        _run_ring_in_executor(loop, "layer_surface", run_surface_layer, {"narrative": text}),
+        _run_ring_in_executor(loop, "layer_spread", run_spread, text),
+        _run_ring_in_executor(loop, "layer_origin", run_origin, text),
+        _run_ring_in_executor(loop, "layer_actor", run_actor_layer, text),
+        _run_ring_in_executor(loop, "layer_pattern", run_pattern_match, text),
+    )
+
+    assert ad_surface == "layer_surface"
+    assert ad_spread == "layer_spread"
+    assert ad_origin == "layer_origin"
+    assert ad_actor == "layer_actor"
+    assert ad_pattern == "layer_pattern"
 
     s_tier = str(surface.get("what_confidence_tier") or "structural_heuristic")
     p_tier = str(spread.get("confidence_tier") or "structural_heuristic")
@@ -82,7 +158,7 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "title": "Surface",
             "content": surface,
             "confidence_tier": s_tier,
-            "absent_fields": surface_absent,
+            "absent_fields": list(surface.get("absent_fields") or []),
             "sources": [
                 _source(
                     "ring-1-layer-surface",
@@ -111,7 +187,7 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "title": "Spread",
             "content": spread,
             "confidence_tier": p_tier,
-            "absent_fields": spread_absent,
+            "absent_fields": list(spread.get("absent_fields") or []),
             "sources": [
                 _source(
                     "ring-2-layer-spread",
@@ -127,7 +203,7 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "title": "Origin",
             "content": origin,
             "confidence_tier": o_tier,
-            "absent_fields": origin_absent,
+            "absent_fields": list(origin.get("absent_fields") or []),
             "sources": [
                 _source(
                     "ring-3-layer-origin",
@@ -143,7 +219,7 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "title": "Actor layer",
             "content": actor,
             "confidence_tier": a_tier,
-            "absent_fields": actor_absent,
+            "absent_fields": list(actor.get("absent_fields") or []),
             "sources": [
                 _source(
                     "ring-4-layer-actor",
@@ -170,7 +246,7 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "confidence_tier": pat_tier,
             "absent_fields": list(
                 dict.fromkeys(
-                    (pattern_absent or [])
+                    (pattern.get("absent_fields") or [])
                     + (["no_pattern_match"] if not pattern.get("matches") else [])
                 )
             ),
@@ -213,6 +289,57 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             }
         )
 
+    sources_checked_map: dict[str, str] = {}
+    ring_meta = [
+        ("layer_surface", st_surface, surface),
+        ("layer_spread", st_spread, spread),
+        ("layer_origin", st_origin, origin),
+        ("layer_actor", st_actor, actor),
+        ("layer_pattern", st_pattern, pattern),
+    ]
+    for adapter, run_st, payload in ring_meta:
+        if run_st == "timeout":
+            status = "timeout"
+            operational.append(
+                {
+                    "text": f"Adapter {adapter} timed out after {RING_TIMEOUT_SEC:.0f}s (operational; report still generated).",
+                    "resolution_possible": True,
+                }
+            )
+        elif run_st == "error":
+            status = "error"
+            operational.append(
+                {
+                    "text": f"Adapter {adapter} failed: {payload.get('error', 'unknown')}",
+                    "resolution_possible": True,
+                }
+            )
+        else:
+            status = _classify_ring_adapter_status(adapter, payload)
+        sources_checked_map[adapter] = status
+
+    for row in actor.get("sources_checked") or []:
+        ad = str(row.get("adapter") or "")
+        st = str(row.get("status") or "not_found")
+        if not ad:
+            continue
+        if ad in sources_checked_map:
+            sources_checked_map[ad] = _merge_source_check_status(sources_checked_map[ad], st)
+        else:
+            sources_checked_map[ad] = st
+        if st == "timeout":
+            operational.append(
+                {
+                    "text": f"Adapter {ad} timed out in Layer 4 stack after 8s (operational; resolution possible).",
+                    "resolution_possible": True,
+                }
+            )
+
+    sources_checked = [
+        {"adapter": k, "status": v}
+        for k, v in sorted(sources_checked_map.items(), key=lambda x: x[0])
+    ]
+
     return {
         "report_id": rid,
         "generated_at": now,
@@ -224,4 +351,5 @@ def build_extended_report(narrative: str) -> dict[str, Any]:
             "operational": operational,
             "epistemic": epistemic,
         },
+        "sources_checked": sources_checked,
     }

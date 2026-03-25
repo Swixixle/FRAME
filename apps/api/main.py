@@ -96,7 +96,7 @@ from pattern_api import get_pattern_lib_payload, run_pattern_match
 from spread_api import run_spread
 from origin_api import run_origin
 from actor_layer_api import run_actor_layer
-from report_api import build_extended_report
+from report_api import build_extended_report_async
 from surface_adapter import SLENDERMAN_SURFACE_BASELINE, run_surface_layer
 from dispute_api import pattern_ids_in_library, run_dispute_append, run_dispute_get
 from verify_record import verify_generic_record
@@ -794,7 +794,7 @@ async def report_post(body: ReportPostBody) -> dict[str, Any]:
     Returns unsigned ExtendedReportPayload; per-ring adapter failures are captured in-ring with absent_fields.
     """
     try:
-        return await asyncio.to_thread(build_extended_report, body.narrative.strip())
+        return await build_extended_report_async(body.narrative.strip())
     except (RuntimeError, OSError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

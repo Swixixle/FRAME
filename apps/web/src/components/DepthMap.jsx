@@ -279,11 +279,10 @@ function actorLayerDeepHref(a) {
 
 const ACTOR_SOURCE_BADGE_ORDER = [
   "ledger",
-  "wikidata",
-  "wikipedia",
   "web_inference",
   "internet_archive",
   "chronicling_america",
+  "jstor",
   "mysterious_universe",
   "anomalist",
   "cryptomundo",
@@ -342,20 +341,6 @@ function singleActorSourceBadge(source) {
       </span>
     );
   }
-  if (source === "wikidata") {
-    return (
-      <span key="wikidata" className="depth-actor-source-badge depth-actor-source-wikidata">
-        WIKIDATA
-      </span>
-    );
-  }
-  if (source === "wikipedia") {
-    return (
-      <span key="wikipedia" className="depth-actor-source-badge depth-actor-source-wikipedia">
-        WIKIPEDIA
-      </span>
-    );
-  }
   if (source === "web_inference") {
     return (
       <span key="web_inference" className="depth-actor-source-badge depth-actor-source-web">
@@ -374,6 +359,13 @@ function singleActorSourceBadge(source) {
     return (
       <span key="chronicling_america" className="depth-actor-source-badge depth-actor-source-ca">
         CHRONICLING AMERICA
+      </span>
+    );
+  }
+  if (source === "jstor") {
+    return (
+      <span key="jstor" className="depth-actor-source-badge depth-actor-source-jstor">
+        JSTOR
       </span>
     );
   }
@@ -422,12 +414,39 @@ function singleActorSourceBadge(source) {
   return null;
 }
 
-function ActorLookupSourceBadge({ lookup_source: src }) {
-  const raw = normalizeActorLookupSources(src).filter(Boolean);
-  if (raw.length === 0) return null;
-  const sorted = [...raw].sort(
-    (a, b) => ACTOR_SOURCE_BADGE_ORDER.indexOf(a) - ACTOR_SOURCE_BADGE_ORDER.indexOf(b),
+function PrimarySourceChips({ events }) {
+  const rows = (events || []).filter(
+    (e) =>
+      e &&
+      e.type !== "layer1_trace" &&
+      (e.source_category === "primary_historical" ||
+        e.source_category === "academic" ||
+        e.source_category === "news_archive" ||
+        e.type === "wikipedia_reference_url" ||
+        e.type === "wikidata_reference_url"),
   );
+  if (rows.length === 0) return null;
+  return (
+    <span className="depth-actor-primary-chips">
+      {rows.slice(0, 8).map((e, i) => (
+        <span key={`${e.source}-${e.date}-${i}`} className="depth-actor-primary-chip" title={e.source}>
+          {(e.description || e.source || "").slice(0, 72)}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ActorLookupSourceBadge({ lookup_source: src }) {
+  const raw = normalizeActorLookupSources(src).filter(
+    (s) => s && s !== "wikidata" && s !== "wikipedia",
+  );
+  if (raw.length === 0) return null;
+  const rank = (x) => {
+    const i = ACTOR_SOURCE_BADGE_ORDER.indexOf(x);
+    return i === -1 ? 999 : i;
+  };
+  const sorted = [...raw].sort((a, b) => rank(a) - rank(b));
   return (
     <span className="depth-actor-source-badges">
       {sorted.map((s) => singleActorSourceBadge(s)).filter(Boolean)}
@@ -462,6 +481,7 @@ function ActorLayerFields({ actorLayer }) {
               <div className="depth-actor-head">
                 <strong>{a.name}</strong>
                 <ActorLookupSourceBadge lookup_source={a.lookup_source} />
+                <PrimarySourceChips events={a.events} />
                 <code className="depth-actor-slug">{a.slug}</code>
                 <RabbitNudge href={deepHref} absent={!deepHref} label="deeper" />
               </div>
@@ -664,6 +684,34 @@ function MediaClaimsList({ claims, ledgerPresence }) {
   );
 }
 
+function sourcesCheckedStatusClass(status) {
+  const s = String(status || "");
+  if (s === "found") return "depth-sc-found";
+  if (s === "timeout") return "depth-sc-timeout";
+  if (s === "error") return "depth-sc-error";
+  return "depth-sc-not_found";
+}
+
+function SourcesCheckedManifest({ entries }) {
+  if (!entries || entries.length === 0) return null;
+  const found = entries.filter((e) => e.status === "found").length;
+  return (
+    <details className="depth-sources-checked-wrap">
+      <summary className="depth-sources-checked-summary">
+        {entries.length} sources checked — {found} returned results
+      </summary>
+      <ul className="depth-sources-checked-list">
+        {entries.map((e) => (
+          <li key={e.adapter} className="depth-sources-checked-row">
+            <code>{e.adapter}</code>
+            <span className={`depth-sc-badge ${sourcesCheckedStatusClass(e.status)}`}>{e.status}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function FiveRingReportPanel({ report, loading, error }) {
   if (loading) {
     return (
@@ -687,6 +735,7 @@ function FiveRingReportPanel({ report, loading, error }) {
         <code>{report.report_id}</code> · {report.generated_at} ·{" "}
         {report.signed ? "signed" : "unsigned"}
       </p>
+      <SourcesCheckedManifest entries={report.sources_checked} />
       <div className="depth-ring-list">
         {report.rings.map((r) => (
           <details key={r.ring} className="depth-ring-details">

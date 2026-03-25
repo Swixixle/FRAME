@@ -1,3 +1,7 @@
+import type { SourceCheckedEntry, SourceCheckedStatus } from "./actor-layer-result.js";
+
+export type { SourceCheckedEntry, SourceCheckedStatus };
+
 /**
  * Provenance row for a ring — structurally matches `SourceRecord` (adapter is widened to string for JSON).
  */
@@ -41,4 +45,6 @@ export interface ExtendedReportPayload {
   signed: boolean;
   signature: string | null;
   unknowns: ReportUnknownsBlock;
+  /** Every adapter invoked for this report (rings + Layer 4 stack), with outcome. */
+  sources_checked?: SourceCheckedEntry[];
 }

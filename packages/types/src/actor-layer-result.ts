@@ -1,6 +1,16 @@
 import type { ActorRecord } from "./actor.js";
 import type { ConfidenceTier } from "./depth.js";
 
+/** Per-adapter outcome for Layer 4 and five-ring report manifest. */
+export type SourceCheckedStatus = "found" | "not_found" | "timeout" | "error";
+
+export interface SourceCheckedEntry {
+  adapter: string;
+  status: SourceCheckedStatus;
+  /** Error message when status is `error`; optional detail otherwise. */
+  detail?: string;
+}
+
 /** Narrative-extracted name with no matching ledger row (after slug + exact name/alias attempts). */
 export interface ActorAbsentRef {
   name: string;
@@ -23,4 +33,6 @@ export interface ActorLayerResult {
   absent_fields: string[];
   /** Actors resolved via Wikidata / Wikipedia / web inference (non-ledger). */
   dynamic_lookups: number;
+  /** Adapters queried for this node run (merged across extracted entities). */
+  sources_checked?: SourceCheckedEntry[];
 }
