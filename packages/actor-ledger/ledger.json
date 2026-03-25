@@ -236,5 +236,83 @@
         "confidence_tier": "cross_corroborated"
       }
     ]
+  },
+  "prometheus": {
+    "name": "Prometheus",
+    "aliases": ["Prometheus Titan", "Fire-bringer", "Prometheus Bound (Aeschylus tradition)"],
+    "events": [
+      {
+        "date": "-0700-01-01",
+        "type": "first_recorded_instance",
+        "description": "Titan who steals fire for humanity and suffers punishment; narrative attested in Hesiod’s Theogony (c. 7th century BCE); Prometheus Bound and other classical sources expand torment at Zeus’s order — attested across multiple ancient Greek textual witnesses",
+        "source": "Hesiod — Theogony (c. 700 BCE); classical Greek dramatic and poetic corpus",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "medusa": {
+    "name": "Medusa",
+    "aliases": ["Gorgon Medusa", "Medousa"],
+    "events": [
+      {
+        "date": "-0700-01-01",
+        "type": "first_recorded_instance",
+        "description": "Gorgon figure named in Hesiod’s Theogony (c. 700 BCE); Roman Ovid Metamorphoses (8 CE) reworks myth with Poseidon encounter and Athena transformation — documentary shift between Greek archaic and Latin imperial literary layers",
+        "source": "Hesiod — Theogony (c. 700 BCE); Ovid — Metamorphoses (8 CE)",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "kali": {
+    "name": "Kali",
+    "aliases": ["Kālī", "Mahakali", "Devi Kali"],
+    "events": [
+      {
+        "date": "0500-01-01",
+        "type": "first_recorded_instance",
+        "description": "Hindu goddess of destruction, time, and fierce protection; textual prominence in Devi Mahatmya / Markandeya Purana stratum (scholarly dating c. 400–600 CE, often cited ~500 CE); earlier South Asian iconography is debated in scholarship and is not a 1:1 match to later Kali imagery in all sources",
+        "source": "Devi Mahatmya / Markandeya Purana tradition (c. 500 CE scholarly consensus range); Indus Valley and pre-Gupta archaeology (interpretive literature)",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "wendigo": {
+    "name": "Wendigo",
+    "aliases": ["Windigo", "Wiindigoo", "Algonquian cannibal spirit"],
+    "events": [
+      {
+        "date": "1636-01-01",
+        "type": "first_recorded_instance",
+        "description": "Algonquian-language-area spirit associated with winter and cannibalistic transformation; ethnographic attestation in Ojibwe, Cree, and Innu traditions. First widely cited European-written note: Jesuit Relations (Paul Le Jeune, 1636). Tier documents existence of the belief in the record, not verification of supernatural claims; missionary source carries colonial observer bias",
+        "source": "Jesuit Relations — Paul Le Jeune, 1636; later ethnography",
+        "confidence_tier": "single_source"
+      }
+    ]
+  },
+  "black-eyed-children": {
+    "name": "Black-eyed children",
+    "aliases": ["BEK", "Brian Bethel encounter"],
+    "events": [
+      {
+        "date": "1996-01-01",
+        "type": "first_recorded_instance",
+        "description": "Reporter Brian Bethel’s narrative of black-eyed child hitchhikers posted to an online paranormal discussion list (Abilene Reporter-News journalist); story documented as early networked folklore seed and traced through forum archives",
+        "source": "Brian Bethel — original 1996 internet post (Abilene Reporter-News attribution in later coverage)",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
+  },
+  "scp-foundation": {
+    "name": "SCP Foundation",
+    "aliases": ["SCP Wiki", "scp-wiki.net", "Secure Contain Protect"],
+    "events": [
+      {
+        "date": "2008-01-01",
+        "type": "content_creation",
+        "description": "Collaborative fiction wiki presenting imaginary anomalies in bureaucratic / case-file tone; launched on community model in 2008 (English-speaking creepypasta scene); publicly mistaken by some readers for leaked government documentation",
+        "source": "SCP Foundation wiki — community genesis and site history (scp-wiki.net, 2008)",
+        "confidence_tier": "cross_corroborated"
+      }
+    ]
   }
 }

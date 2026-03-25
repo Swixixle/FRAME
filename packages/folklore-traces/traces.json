@@ -301,5 +301,115 @@
     "absent_fields": ["single_ur_manuscript_for_all_anansi_tales", "authorial_attribution_for_oral_variants"],
     "source_type": "text",
     "ledger_slug": "anansi"
+  },
+  "prometheus": {
+    "what": "Prometheus is the Greek Titan who steals fire for mortals and is punished with binding and repeated torment; the arc is canonical in archaic epic (Hesiod) and elaborated in classical tragedy and iconography.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Prometheus (Titan, mythic actor)", "confidence_tier": "official_secondary" },
+      { "name": "Zeus (punisher in mythic narrative)", "confidence_tier": "official_secondary" },
+      { "name": "Hesiod (Theogony textual witness)", "confidence_tier": "official_primary" }
+    ],
+    "when": {
+      "earliest_appearance": "c. 7th century BCE — Hesiod Theogony attestation in edited Greek manuscript tradition",
+      "source": "Hesiod Theogony; Loeb / OCT critical editions",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_historical_biography_outside_mythographic_record", "uniform_iconography_across_all_poleis"],
+    "source_type": "text",
+    "ledger_slug": "prometheus"
+  },
+  "medusa": {
+    "what": "Medusa is a Gorgon of Greek myth; archaic hexameter lists her among divine offspring in Hesiod, while Ovid’s Latin Metamorphoses supplies the widely adapted Poseidon-and-Athena petrification narrative — a documented literary re-layering.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Medusa / Medousa (Gorgon)", "confidence_tier": "official_secondary" },
+      { "name": "Perseus (slayer in canonical myth cycle)", "confidence_tier": "official_secondary" },
+      { "name": "Hesiod; Ovid (textual strata)", "confidence_tier": "official_primary" }
+    ],
+    "when": {
+      "earliest_appearance": "c. 700 BCE Theogony line; 8 CE Metamorphoses book 4",
+      "source": "Hesiod Theogony; Ovid Metamorphoses",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["single_continuous_oral_chain_from_bronze_age_to_Latin_codex", "archaeological_depiction_named_Medusa_in_all_sites_without_dispute"],
+    "source_type": "text",
+    "ledger_slug": "medusa"
+  },
+  "kali": {
+    "what": "Kālī is a fierce Hindu goddess of time and destruction, central to Śākta worship; the Devi Mahatmya / Markandeya Purana corpus (4th–6th century CE in common dating) is the primary Sanskrit textual locus; earlier terracotta and seal interpretations in Indus material remain contested in peer literature.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Kali / Mahakali (deity figure)", "confidence_tier": "official_secondary" },
+      { "name": "Markandeya Purana textual tradition", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "c. 400–600 CE — Devi Mahatmya stratum; iconographic boom in medieval Bengal and Nepal in art-historical surveys",
+      "source": "Sanskrit Puranic editions; Devi Mahatmya scholarship; museum sculpture corpora",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["unanimous_Indus_Valley_identification_with_Kali_by_all_archaeologists", "single_authorship_attribution_for_Puranic_compilation"],
+    "source_type": "text",
+    "ledger_slug": "kali"
+  },
+  "wendigo": {
+    "what": "The Wendigo (Windigo) is an Algonquian-area spirit tied to winter starvation and cannibalism anxiety; belief is attested across Ojibwe, Cree, and Innu ethnography. Earliest widely cited European written mention is Jesuit missionary Paul Le Jeune (1636) — documents existence of the belief in public record, not supernatural fact; colonial framing bias applies.",
+    "what_confidence_tier": "single_source",
+    "who": [
+      { "name": "Paul Le Jeune (Jesuit observer, Jesuit Relations 1636)", "confidence_tier": "single_source" },
+      { "name": "Ojibwe / Cree / Innu narrative communities", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "1636 — Le Jeune account in Jesuit Relations; later anthropological collections",
+      "source": "Jesuit Relations; modern ethnography",
+      "confidence_tier": "single_source"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["independent_pre_contact_written_primary_without_missionary_mediation", "forensic_verification_of_supernatural_entity"],
+    "source_type": "text",
+    "ledger_slug": "wendigo"
+  },
+  "black-eyed-children": {
+    "what": "Black-eyed children (BEK) denotes an internet-age paranormal meme seeded by journalist Brian Bethel’s 1996 account on a ghost-hunting mailing list; lineage is traceable through forum and blog republication rather than multiple independent pre-digital witnesses.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "Brian Bethel (Abilene Reporter-News, attributed author of seed post)", "confidence_tier": "official_secondary" },
+      { "name": "1990s paranormal forum / listserv ecosystem", "confidence_tier": "aggregated_registry" }
+    ],
+    "when": {
+      "earliest_appearance": "1996 — original post date in secondary documentation of list archives",
+      "source": "Journalist interviews; folklore studies of creepypasta genesis",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["contemporaneous_police_blotter_matching_all_later_variants", "medical_imaging_of_encounter"],
+    "source_type": "text",
+    "ledger_slug": "black-eyed-children"
+  },
+  "scp-foundation": {
+    "what": "The SCP Foundation is a collaborative fiction wiki (since 2008) that catalogs imaginary anomalies using fake government case-file diction; some readers have misfiled entries as authentic leaks — a literacy and provenance issue, not classified record release.",
+    "what_confidence_tier": "cross_corroborated",
+    "who": [
+      { "name": "SCP Foundation English wiki community", "confidence_tier": "aggregated_registry" },
+      { "name": "Wikidot / scp-wiki.net hosting layer", "confidence_tier": "official_secondary" }
+    ],
+    "when": {
+      "earliest_appearance": "2008 — community-founded fiction project per site history pages",
+      "source": "SCP wiki front page and /history metadata; press profiles",
+      "confidence_tier": "cross_corroborated"
+    },
+    "source_url": null,
+    "source_url_confidence_tier": null,
+    "absent_fields": ["USG_OR_MoD_registry_entry_for_SCP_objects", "independent_forensic_authentication_of_anomaly_objects"],
+    "source_type": "text",
+    "ledger_slug": "scp-foundation"
   }
 }

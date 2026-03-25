@@ -29,7 +29,7 @@
       ],
       "min_hits": 2
     },
-    "signed_at": "2026-03-25T07:01:11.981Z",
+    "signed_at": "2026-03-25T10:22:06.409Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -61,7 +61,7 @@
       ],
       "min_hits": 3
     },
-    "signed_at": "2026-03-25T07:01:11.982Z",
+    "signed_at": "2026-03-25T10:22:06.410Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -92,7 +92,7 @@
       "min_hits": 2
     },
     "signature": "292ec4a70997dd64b757dca3d611121dacccf0c321ffdf7aeb893f71accaf610a4622d05633e8236a0f88d5eee1b9dfa4316c78c1761dd56213a699cb683e902",
-    "signed_at": "2026-03-25T07:01:11.982Z",
+    "signed_at": "2026-03-25T10:22:06.410Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -124,7 +124,7 @@
       "min_hits": 2
     },
     "signature": "b9ac70eb967a5a3cf86edfed6c2ee9d09ae76820cbcca16f69da38dd66273e21356cc209c90d0e085584fde24e5f4b7a5d3e93b191acb236a472ffb163e7d606",
-    "signed_at": "2026-03-25T07:01:11.983Z",
+    "signed_at": "2026-03-25T10:22:06.411Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -153,7 +153,7 @@
       "min_hits": 2
     },
     "signature": "ec38db5944287cbb38093814ec64ff847d4c570c933038e9a6b211f0086726c092db651ad1fd2a0b2e4b0ced1bd28109613d7bcf53b44ab56fc9d079e09e4b08",
-    "signed_at": "2026-03-25T07:01:11.983Z",
+    "signed_at": "2026-03-25T10:22:06.411Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -199,7 +199,7 @@
       "min_hits": 3
     },
     "signature": "a308389f245bd56bbe981c41e1645402fdc237a2ab07aa8e3d5fffcf4bd0def8090ccf0179070efb3028d770cf878c4d2a315cfea5ab4a4a89703fbc11ea8806",
-    "signed_at": "2026-03-25T07:01:11.984Z",
+    "signed_at": "2026-03-25T10:22:06.411Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -233,7 +233,7 @@
       "min_hits": 3
     },
     "signature": "e82c414ea59b20d3f98c4f863f000f98d28bbb7f7111018fca48f7c877992c7f3bcb7f7ece6c6de8054f3423e538628897fcbfc9e5c368bc4ffefce081c1150f",
-    "signed_at": "2026-03-25T07:01:11.984Z",
+    "signed_at": "2026-03-25T10:22:06.412Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -272,7 +272,7 @@
       "min_hits": 2
     },
     "signature": "ae1d8796901955ccb9162281b1415ae6124abbaca3f09c3223071abe34c35e3cbf5947b2e6f84363c235f69e2f5bc7ef8cb32f1818cbf2fff789efc5ab8af000",
-    "signed_at": "2026-03-25T07:01:11.985Z",
+    "signed_at": "2026-03-25T10:22:06.413Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -310,7 +310,7 @@
       "min_hits": 2
     },
     "signature": "cf27218889710b2073001392a983f13e9f2ec19530449f18e8563c6fb98ab6c703541c761f880fdc270288c2d8e8a3a8c9021b8895b653b3519406d3eb1aa907",
-    "signed_at": "2026-03-25T07:01:11.985Z",
+    "signed_at": "2026-03-25T10:22:06.413Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   },
   {
@@ -346,7 +346,47 @@
       "min_hits": 3
     },
     "signature": "1dd0fff05b5312cf5c7defc23608f4e97fe02c1d445074db6cfe5099ac66a1d6ca5025cde5d005fbe47b8eec71125346ef137383eb554a04650ccbc4313a8f0e",
-    "signed_at": "2026-03-25T07:01:11.986Z",
+    "signed_at": "2026-03-25T10:22:06.413Z",
+    "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
+  },
+  {
+    "id": "clinical-fiction-as-fact-v1",
+    "label": "Clinical fiction mistaken for fact",
+    "summary": "Fictional or hoax material presented in official or clinical document formats (government report tone, case-file numbering, redacted headers) that is mistaken for authentic institutional records. Historical analogs: SCP Foundation wiki style, misattributed MKUltra fan documents, fabricated leaked dossiers. Requires absence of verifiable issuing authority in the public record.",
+    "constraints": {
+      "clinical_document_format": true,
+      "fictional_entity_markers": true,
+      "verifiable_institutional_origin_required": false
+    },
+    "literary_analog": "SCP Foundation collaborative fiction; hoax CIA PDF chains",
+    "detection": {
+      "keywords": [
+        "SCP-",
+        "object class",
+        "special containment procedures",
+        "redacted",
+        "case file",
+        "classified annex",
+        "leaked report",
+        "MKUltra",
+        "memorandum for the record",
+        "subject designation",
+        "item number",
+        "containment breach",
+        "bureau of",
+        "clinical summary",
+        "artifact log",
+        "no verifiable source",
+        "cannot verify origin",
+        "fan wiki",
+        "collaborative fiction",
+        "creative writing",
+        "hoax document"
+      ],
+      "min_hits": 2
+    },
+    "signature": "02fa3d34350bcb1a128b02f97732eb6720b378451ece978b7be1d71b8006bd04b34df7fb6c798ef7190352d6a08ab522b4875d9e5a79f642436203c28ac9960a",
+    "signed_at": "2026-03-25T10:22:06.414Z",
     "public_key": "13609a48177ff29523089a970c7d2278fd759b8ef76a73c406bea6c9ca1d015a"
   }
 ]
