@@ -1,4 +1,5 @@
 import type { ConfidenceTier } from "./depth.js";
+import type { SurfaceNamedActor, SurfaceWhenBlock } from "./surface-result.js";
 
 /** Single dated fact in an actor's public-record timeline (Layer 4 ledger). */
 export interface ActorEvent {
@@ -23,4 +24,12 @@ export interface ActorRecord {
   wikidata_id?: string;
   /** MediaWiki title with underscores when `lookup_source === "wikipedia"`. */
   wikipedia_title?: string;
+  /**
+   * Layer 1 surface pass anchored on Wikidata/Wikipedia text (dynamic rows only).
+   */
+  what?: string;
+  cultural_substrate?: string | null;
+  what_confidence_tier?: ConfidenceTier;
+  surface_who?: SurfaceNamedActor[];
+  surface_when?: SurfaceWhenBlock;
 }

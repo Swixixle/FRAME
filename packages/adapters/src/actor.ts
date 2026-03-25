@@ -7,6 +7,7 @@ import {
   listLedgerSearchHints,
 } from "@frame/actor-ledger";
 import { extractOriginSeedingEntities } from "./origin.js";
+import { getSurfaceLayer } from "./surface.js";
 import { extractPlatformsMentionedFromNarrative } from "./spread.js";
 
 /** Static Layer 4 metadata (depth map). */
@@ -77,6 +78,26 @@ function formatWikidataTime(raw: { time?: string; precision?: number } | undefin
   return `${yStr}-${mo}-${da}`;
 }
 
+/** Opening paragraph from English Wikipedia REST summary (underscores in path). */
+async function fetchWikipediaPageExtract(titleUnderscores: string): Promise<string | null> {
+  const t = titleUnderscores.trim();
+  if (t.length < 2) return null;
+  const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(t)}`;
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": UA } });
+    if (r.status === 404 || !r.ok) return null;
+    const data = (await r.json()) as {
+      type?: string;
+      extract?: string;
+    };
+    if (data.type === "disambiguation") return null;
+    const extract = (data.extract ?? "").trim();
+    return extract.length > 0 ? extract : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Wikidata entity search + optional P571 for event date. */
 export async function lookupWikidata(name: string): Promise<ActorRecord | null> {
   const q = name.trim();
@@ -110,14 +131,16 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
     let description = first.description ?? "";
     let dateStr = "";
 
-    const entUrl = `${WD_API}?action=wbgetentities&ids=${id}&languages=en&props=claims|descriptions|labels&format=json`;
+    const entUrl = `${WD_API}?action=wbgetentities&ids=${id}&languages=en&props=claims|descriptions|labels|sitelinks&format=json`;
     const er = await fetch(entUrl, { headers: { "User-Agent": UA } });
+    let wikipedia_title: string | undefined;
     if (er.ok) {
       const ed = (await er.json()) as {
         entities?: Record<
           string,
           {
             descriptions?: { en?: { value?: string } };
+            sitelinks?: { enwiki?: { title?: string } };
             claims?: Record<
               string,
               Array<{ mainsnak?: { datavalue?: { value?: unknown } } }>
@@ -128,6 +151,10 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
       const entity = ed.entities?.[id];
       if (entity?.descriptions?.en?.value) {
         description = entity.descriptions.en.value;
+      }
+      const enwiki = entity?.sitelinks?.enwiki?.title?.trim();
+      if (enwiki) {
+        wikipedia_title = enwiki.replace(/ /g, "_");
       }
       const p571 = entity?.claims?.P571?.[0]?.mainsnak?.datavalue?.value as
         | { time?: string; precision?: number }
@@ -142,6 +169,7 @@ export async function lookupWikidata(name: string): Promise<ActorRecord | null> 
       aliases: q !== label ? [q] : [],
       lookup_source: "wikidata",
       wikidata_id: id,
+      wikipedia_title,
       events: [
         {
           date: dateStr || "unknown",
@@ -280,12 +308,71 @@ export async function lookupWeb(name: string): Promise<ActorRecord | null> {
   };
 }
 
+/**
+ * Run Layer 1 surface extraction on the Wikidata/Wikipedia anchor text so the actor row
+ * carries forensic `what` / `cultural_substrate` / `who` / `when`, not only a one-line API blurb.
+ */
+async function enrichDynamicRecordWithSurface(rec: ActorRecord): Promise<ActorRecord> {
+  if (rec.lookup_source !== "wikidata" && rec.lookup_source !== "wikipedia") {
+    return rec;
+  }
+  const wikidataOneLiner = (rec.events[0]?.description ?? "").trim();
+  let anchorNarrative = `${rec.name} — ${wikidataOneLiner}`.trim();
+  if (anchorNarrative.length > 0 && !anchorNarrative.endsWith(".")) {
+    anchorNarrative += ".";
+  }
+
+  let usedWikipediaExtract = false;
+  if (rec.lookup_source === "wikidata") {
+    const titleForRest =
+      rec.wikipedia_title?.trim() || rec.name.replace(/\s+/g, "_");
+    const wpExtract = await fetchWikipediaPageExtract(titleForRest);
+    if (wpExtract) {
+      anchorNarrative = `${anchorNarrative} ${wpExtract}`.trim();
+      usedWikipediaExtract = true;
+    }
+  }
+
+  anchorNarrative = anchorNarrative.slice(0, 2000);
+  if (anchorNarrative.length < 6) return rec;
+  try {
+    const surface = await getSurfaceLayer({ narrative: anchorNarrative });
+    const anchorSource =
+      rec.lookup_source === "wikidata" && rec.wikidata_id
+        ? usedWikipediaExtract
+          ? `Wikidata (${rec.wikidata_id}) + English Wikipedia extract; Layer 1 surface extraction`
+          : `Wikidata anchor (${rec.wikidata_id}); Layer 1 surface extraction`
+        : rec.lookup_source === "wikipedia" && rec.wikipedia_title
+          ? `Wikipedia anchor (${rec.wikipedia_title}); Layer 1 surface extraction`
+          : "External anchor; Layer 1 surface extraction";
+    return {
+      ...rec,
+      what: surface.what,
+      cultural_substrate: surface.cultural_substrate,
+      what_confidence_tier: surface.what_confidence_tier,
+      surface_who: surface.who,
+      surface_when: surface.when,
+      events: [
+        {
+          date: rec.events[0]?.date ?? "unknown",
+          type: "layer1_trace",
+          description: surface.what,
+          source: anchorSource,
+          confidence_tier: surface.what_confidence_tier,
+        },
+      ],
+    };
+  } catch {
+    return rec;
+  }
+}
+
 /** Try Wikidata, then Wikipedia, then constrained LLM extraction. */
 export async function dynamicLookupChain(name: string): Promise<ActorRecord | null> {
   const wd = await lookupWikidata(name);
-  if (wd) return wd;
+  if (wd) return enrichDynamicRecordWithSurface(wd);
   const wp = await lookupWikipedia(name);
-  if (wp) return wp;
+  if (wp) return enrichDynamicRecordWithSurface(wp);
   return lookupWeb(name);
 }
 
@@ -357,6 +444,16 @@ function subjectsFromIsWas(text: string): string[] {
   return out;
 }
 
+/** Narrative that is only a multi-word proper name, e.g. `Baba Yaga` (no verb clause). */
+function bareProperNamePhrases(text: string): string[] {
+  const t = text.trim();
+  if (!t) return [];
+  if (/^(?:[A-Z][a-z]+)(?:\s+[A-Z][a-z]+){1,4}$/.test(t)) {
+    return [t];
+  }
+  return [];
+}
+
 function mergeCandidates(text: string): string[] {
   const set = new Set<string>();
   for (const x of extractOriginSeedingEntities(text)) {
@@ -369,6 +466,9 @@ function mergeCandidates(text: string): string[] {
     if (x.trim()) set.add(x.trim());
   }
   for (const x of subjectsFromIsWas(text)) {
+    if (x.trim()) set.add(x.trim());
+  }
+  for (const x of bareProperNamePhrases(text)) {
     if (x.trim()) set.add(x.trim());
   }
   return [...set].sort((a, b) => a.localeCompare(b));

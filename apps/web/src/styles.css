@@ -1937,6 +1937,41 @@ body {
   font-size: 0.8rem;
 }
 
+.depth-actor-layer1-trace {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.depth-actor-layer1-title {
+  margin: 0 0 8px;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.depth-actor-layer1-what {
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.depth-actor-layer1-substrate {
+  margin: 0 0 8px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.depth-actor-layer1-when {
+  margin-top: 8px;
+}
+
 .depth-actor-events {
   list-style: none;
   margin: 4px 0 0;

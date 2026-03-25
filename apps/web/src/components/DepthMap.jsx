@@ -319,6 +319,41 @@ function ActorLayerFields({ actorLayer }) {
                 <code className="depth-actor-slug">{a.slug}</code>
                 <RabbitNudge href={deepHref} absent={!deepHref} label="deeper" />
               </div>
+              {a.what || a.cultural_substrate || (a.surface_who && a.surface_who.length > 0) || a.surface_when ? (
+                <div className="depth-actor-layer1-trace">
+                  <h4 className="depth-actor-layer1-title">Entity trace (Layer 1)</h4>
+                  {a.what ? <p className="depth-actor-layer1-what">{a.what}</p> : null}
+                  {a.cultural_substrate ? (
+                    <p className="depth-actor-layer1-substrate">{a.cultural_substrate}</p>
+                  ) : null}
+                  {a.what_confidence_tier ? (
+                    <div className="depth-meta-row">
+                      <TierBadge tier={a.what_confidence_tier} />
+                      <span className="depth-muted">what tier (surface)</span>
+                    </div>
+                  ) : null}
+                  {a.surface_who && a.surface_who.length > 0 ? (
+                    <div className="depth-spread-block">
+                      <strong>Who</strong>
+                      <ul className="depth-spread-list">
+                        {a.surface_who.map((w) => (
+                          <li key={w.name}>
+                            {w.name} <TierBadge tier={w.confidence_tier} />
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {a.surface_when && (a.surface_when.earliest_appearance || a.surface_when.source) ? (
+                    <div className="depth-when depth-actor-layer1-when">
+                      <strong>When</strong>
+                      <p>{a.surface_when.earliest_appearance}</p>
+                      <p className="depth-muted">{a.surface_when.source}</p>
+                      <TierBadge tier={a.surface_when.confidence_tier} />
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               {(a.aliases || []).length > 0 ? (
                 <div className="depth-spread-block">
                   <strong>Aliases</strong>
