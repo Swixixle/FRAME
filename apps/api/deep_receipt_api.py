@@ -244,34 +244,11 @@ async def build_deep_receipt(query: str) -> dict[str, Any]:
         search_semantic_scholar(q, 5),
         search_opinions(q, 3),
     )
-    layer_b_candidates: list[dict[str, Any]] = []
-    for op in cl_opinions:
-        if not isinstance(op, dict):
-            continue
-        df = str(op.get("date_filed") or "")
-        year = int(df[:4]) if len(df) >= 4 and df[:4].isdigit() else 0
-        case = str(op.get("case_name") or "").strip()
-        summ = str(op.get("summary") or "")
-        url = str(op.get("url") or "").strip()
-        event = f"{case} — {summ[:200]}"
-        if not event.strip() or not url:
-            continue
-        layer_b_candidates.append(
-            {
-                "year": year,
-                "event": event,
-                "source_url": url,
-                "source_type": "judicial_opinion",
-            }
-        )
+    # Top-level judicial_opinions so the three-layer prompt highlights CourtListener first.
     historical: dict[str, Any] = {
+        "judicial_opinions": cl_opinions,
         "openalex": oa,
         "semantic_scholar": ss,
-        "courtlistener": {
-            "opinions": cl_opinions,
-            "layer_b_candidates": layer_b_candidates,
-            "sourcing_completeness": "partial" if cl_opinions else "unavailable",
-        },
     }
 
     payload = _run_three_layer_ts(q, qtype, primary, historical)

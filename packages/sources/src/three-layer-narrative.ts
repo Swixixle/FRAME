@@ -199,6 +199,8 @@ export async function generateThreeLayerNarrative(
 
   const user = `Return a single JSON object only. No markdown fences, no commentary before or after.
 
+If judicial_opinions are present in historicalSources, you MUST use their URLs as source_url values in layer_b ThreadEntries. Prefer judicial_opinion source_type over academic_paper when CourtListener URLs are available. Do not invent URLs — use exactly the URLs provided in the input data.
+
 Required shape (all keys present; use [] for empty arrays; strings may be empty only where the instructions allow):
 {
   "layer_a": { "lede": string, "findings": string, "gaps": string, "sources": PrimarySource[] },
@@ -236,7 +238,7 @@ ${JSON.stringify(queryType)}
 Primary source bundle (Layer A — verified record inputs). Ground Layer A only in this material when it contains data; if sparse, state gaps explicitly:
 ${JSON.stringify(primarySources, null, 2)}
 
-Historical / scholarly bundle (Layer B inputs). May be partial. If courtlistener_stub is true, you must set sourcing_completeness to partial or inferred and name what CourtListener or case law would supply:
+Historical / scholarly bundle (Layer B inputs). judicial_opinions (when non-empty) are live CourtListener results — treat them as the primary legal record for Layer B; openalex and semantic_scholar are supplementary. If courtlistener_stub is true, you must set sourcing_completeness to partial or inferred and name what CourtListener or case law would supply:
 ${JSON.stringify(historicalSources, null, 2)}
 `;
 
