@@ -699,6 +699,25 @@ async def health() -> dict[str, Any]:
     }
 
 
+@app.get("/v1/status")
+def status():
+    import os
+
+    keys = [
+        "ANTHROPIC_API_KEY",
+        "FRAME_PRIVATE_KEY",
+        "FEC_API_KEY",
+        "CONGRESS_API_KEY",
+        "COURTLISTENER_API_KEY",
+        "ASSEMBLYAI_API_KEY",
+        "SEC_EDGAR_USER_AGENT",
+    ]
+    return {
+        k: "set" if os.environ.get(k) else "missing"
+        for k in keys
+    }
+
+
 @app.get("/v1/schema-baselines")
 async def get_schema_baselines() -> dict[str, Any]:
     """
