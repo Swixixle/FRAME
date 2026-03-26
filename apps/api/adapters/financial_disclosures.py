@@ -21,25 +21,33 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 )
 
-# (regex, low_cents-ish as int dollars lower bound, upper bound) — House OGE columns use these brackets.
-_ASSET_RANGE_SPECS: list[tuple[re.Pattern[str], int, int]] = [
-    (re.compile(r"\$1,001\s*-\s*\$15,000", re.I), 1_001, 15_000),
-    (re.compile(r"\$15,001\s*-\s*\$50,000", re.I), 15_001, 50_000),
-    (re.compile(r"\$50,001\s*-\s*\$100,000", re.I), 50_001, 100_000),
-    (re.compile(r"\$100,001\s*-\s*\$250,000", re.I), 100_001, 250_000),
-    (re.compile(r"\$250,001\s*-\s*\$500,000", re.I), 250_001, 500_000),
-    (re.compile(r"\$500,001\s*-\s*\$1,000,000", re.I), 500_001, 1_000_000),
-    (re.compile(r"\$1,000,001\s*-\s*\$5,000,000", re.I), 1_000_001, 5_000_000),
-    (re.compile(r"\$5,000,001\s*-\s*\$25,000,000", re.I), 5_000_001, 25_000_000),
-    (re.compile(r"\$25,000,001\s*-\s*\$50,000,000", re.I), 25_000_001, 50_000_000),
-]
-_OVER_50M = re.compile(r"Over\s*\$50,000,000", re.I)
+# Schedule A: dollar range (spaces around hyphen optional). "Over" open-ended.
+_SCHEDULE_A_RANGE_RE = re.compile(r"\$[\d,]+\s*-\s*\$[\d,]+")
+_SCHEDULE_A_OVER_RE = re.compile(r"Over\s*\$[\d,]+", re.I)
+_SCHEDULE_A_HEADER_RE = re.compile(r"schedule\s*[^a-z0-9]{0,15}a", re.I)
+_SCHEDULE_BC_RE = re.compile(r"schedule\s*[bc](?:\s|\.|:|,|\(|$|<)", re.I)
+# Schedule A rows: asset range, then income type(s), then income range — skip the latter.
+_INCOME_TYPE_BEFORE_RANGE = re.compile(
+    r"(capital\s+gains|dividends?|interest|rent(?:al)?|royalt(?:y|ies))\s*,?\s*$",
+    re.I,
+)
 
 _HOUSE_MEMBER_SEARCH_POST = (
     "https://disclosures-clerk.house.gov/FinancialDisclosure/ViewMemberSearchResult"
 )
-_HOUSE_FD_BASE = "https://disclosures-clerk.house.gov/FinancialDisclosure/"
+# PDFs live under /public_disc/... — /FinancialDisclosure/public_disc/... returns 404 on clerk host.
+_HOUSE_FD_BASE = "https://disclosures-clerk.house.gov/"
 _FIN_YEAR_IN_PDF_PATH = re.compile(r"financial-pdfs/(\d{4})", re.I)
+_BROKEN_CLERK_PDF_PREFIX = "https://disclosures-clerk.house.gov/FinancialDisclosure/public_disc/"
+_FIXED_CLERK_PDF_PREFIX = "https://disclosures-clerk.house.gov/public_disc/"
+
+
+def _normalize_house_clerk_pdf_url(url: str) -> str:
+    u = (url or "").strip()
+    if _BROKEN_CLERK_PDF_PREFIX in u:
+        u = u.replace(_BROKEN_CLERK_PDF_PREFIX, _FIXED_CLERK_PDF_PREFIX)
+    return u
+
 
 def _last_name(member_name: str) -> str:
     parts = (member_name or "").strip().split()
@@ -62,7 +70,10 @@ def _parse_house_financial_pdf_links(html: str, display_name: str) -> list[dict[
         yr = int(m.group(1))
         if not (1990 <= yr <= 2035):
             continue
-        doc_url = href if href.startswith("http") else urljoin(_HOUSE_FD_BASE, href)
+        if href.startswith("http"):
+            doc_url = _normalize_house_clerk_pdf_url(href)
+        else:
+            doc_url = _normalize_house_clerk_pdf_url(urljoin(_HOUSE_FD_BASE, href))
         if doc_url in seen_urls:
             continue
         seen_urls.add(doc_url)
@@ -136,19 +147,66 @@ async def get_senate_disclosures(member_name: str) -> list[dict[str, Any]]:
     return []
 
 
-def _midpoints_from_asset_text(text: str) -> tuple[int, list[str]]:
-    total_mid = 0
+def _parse_money_amount(tok: str) -> int:
+    s = tok.strip().lstrip("$").replace(",", "")
+    return int(s)
+
+
+def _schedule_a_window(full_text: str) -> str:
+    """Slice text from Schedule A (with Asset nearby) through next Schedule B/C or EOF."""
+    if not (full_text or "").strip():
+        return ""
+    text = full_text
+    for m in _SCHEDULE_A_HEADER_RE.finditer(text):
+        span_end = min(len(text), m.end() + 400)
+        chunk = text[m.start() : span_end]
+        if not re.search(r"asset", chunk, re.I):
+            continue
+        start_i = m.start()
+        after = text[m.end() :]
+        end_m = _SCHEDULE_BC_RE.search(after)
+        if end_m:
+            return text[start_i : m.end() + end_m.start()]
+        return text[start_i:]
+    return ""
+
+
+def _likely_schedule_a_income_column_range(window: str, m: re.Match[str]) -> bool:
+    before = window[max(0, m.start() - 72) : m.start()]
+    return bool(_INCOME_TYPE_BEFORE_RANGE.search(before))
+
+
+def _midpoints_from_schedule_a_window(window: str) -> tuple[int, list[str]]:
+    total_mid = 0.0
     found: list[str] = []
-    for pat, lo, hi in _ASSET_RANGE_SPECS:
-        for m in pat.finditer(text):
-            mid = (lo + hi) / 2.0
-            total_mid += mid
-            found.append(m.group(0).strip())
-    for m in _OVER_50M.finditer(text):
-        lo = 50_000_000
-        hi = 75_000_000
+    for m in _SCHEDULE_A_RANGE_RE.finditer(window):
+        raw = m.group(0)
+        if _likely_schedule_a_income_column_range(window, m):
+            continue
+        compact = re.sub(r"\s*-\s*", "-", raw.strip())
+        parts = compact.split("-", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            lo = _parse_money_amount(parts[0])
+            hi = _parse_money_amount(parts[1])
+        except ValueError:
+            continue
+        if lo > hi:
+            lo, hi = hi, lo
         total_mid += (lo + hi) / 2.0
-        found.append(m.group(0).strip())
+        found.append(raw.strip())
+    for m in _SCHEDULE_A_OVER_RE.finditer(window):
+        raw = m.group(0).strip()
+        found.append(raw)
+        inner = re.search(r"\$([\d,]+)", raw, re.I)
+        if not inner:
+            continue
+        lo = int(inner.group(1).replace(",", ""))
+        if lo >= 50_000_000:
+            total_mid += (50_000_000 + 75_000_000) / 2.0
+        else:
+            total_mid += lo * 1.25
     return int(round(total_mid)), found
 
 
@@ -162,7 +220,7 @@ def _year_from_url(url: str) -> int | None:
 
 async def parse_house_disclosure_pdf(url: str, year: int | None = None) -> dict[str, Any]:
     try:
-        u = (url or "").strip()
+        u = _normalize_house_clerk_pdf_url((url or "").strip())
         if not u:
             return {}
         yr = year if year is not None else _year_from_url(u)
@@ -214,22 +272,47 @@ async def parse_house_disclosure_pdf(url: str, year: int | None = None) -> dict[
                 "note": "Response was not a PDF; cannot parse asset ranges.",
             }
 
-        def _read() -> str:
+        def _read() -> tuple[str, str, list[str]]:
             reader = PdfReader(io.BytesIO(body))
             parts: list[str] = []
-            for page in reader.pages:
-                parts.append(page.extract_text() or "")
-            return "\n".join(parts)
+            page0_text = ""
+            for i, page in enumerate(reader.pages):
+                raw = page.extract_text() or ""
+                if i == 0:
+                    page0_text = raw
+                parts.append(raw)
+            joined = " ".join(parts)
+            return joined, page0_text, parts
 
-        text = await asyncio.to_thread(_read)
-        est, labels = _midpoints_from_asset_text(text)
+        text, page1_extracted, per_page = await asyncio.to_thread(_read)
+        _LOG.debug(
+            "parse_house_disclosure_pdf page1 first 500 chars (url=%s): %r",
+            u,
+            (page1_extracted or "")[:500],
+        )
+        if per_page and not any((p or "").strip() for p in per_page):
+            return {
+                "url": u,
+                "year": yr,
+                "estimated_assets": None,
+                "method": "scanned_pdf_no_text_layer",
+                "note": (
+                    "This filing is a scanned image PDF. Text extraction not possible without OCR. "
+                    "See document_url for manual review."
+                ),
+                "document_url": u,
+            }
+
+        window = _schedule_a_window(text)
+        est, labels = _midpoints_from_schedule_a_window(window)
         return {
             "url": u,
             "year": yr,
             "estimated_assets": est,
             "asset_ranges_found": labels[:200],
-            "method": "pdf_midpoint_estimate",
-            "note": "Asset values are self-reported ranges. Midpoint used for estimation. Not audited figures.",
+            "method": "pdf_midpoint_schedule_a",
+            "note": "Schedule A asset column only; midpoints from self-reported ranges. Not audited figures.",
+            "document_url": u,
         }
     except Exception as exc:  # noqa: BLE001
         _LOG.warning("parse_house_disclosure_pdf failed for %s: %s", url, exc)
@@ -293,11 +376,23 @@ async def build_wealth_delta(member_name: str, chamber: str = "house") -> dict[s
                     "document_url": "",
                     "note": "Self-reported range, midpoint estimate — no filing in target years.",
                 }
+            doc_u = _normalize_house_clerk_pdf_url(str(rec.get("document_url") or ""))
+            est_raw = parsed.get("estimated_assets")
+            if est_raw is None:
+                return {
+                    "year": int(rec.get("filing_year") or parsed.get("year") or 0),
+                    "estimated_assets": None,
+                    "document_url": doc_u,
+                    "note": str(
+                        parsed.get("note")
+                        or "Scanned PDF; no text layer. See document for manual review."
+                    ),
+                }
             return {
                 "year": int(rec.get("filing_year") or parsed.get("year") or 0),
-                "estimated_assets": int(parsed.get("estimated_assets") or 0),
-                "document_url": str(rec.get("document_url") or ""),
-                "note": "Self-reported range, midpoint estimate",
+                "estimated_assets": int(est_raw),
+                "document_url": doc_u,
+                "note": str(parsed.get("note") or "Schedule A midpoint estimate from self-reported ranges."),
             }
 
         pre_b = _block(pre_rec, pre_parse)
@@ -305,8 +400,8 @@ async def build_wealth_delta(member_name: str, chamber: str = "house") -> dict[s
         out["pre_citizens_united"] = pre_b
         out["post_citizens_united"] = post_b
 
-        pre_a = int(pre_b.get("estimated_assets") or 0)
-        post_a = int(post_b.get("estimated_assets") or 0)
+        pre_a = pre_b.get("estimated_assets")
+        post_a = post_b.get("estimated_assets")
         if missing == "pre":
             out["missing"] = "pre"
         elif missing == "post":
@@ -315,9 +410,15 @@ async def build_wealth_delta(member_name: str, chamber: str = "house") -> dict[s
             out["missing"] = "pre_and_post"
 
         if pre_rec and post_rec and pre_b.get("document_url") and post_b.get("document_url"):
-            delta = post_a - pre_a
-            out["delta"] = delta
-            out["delta_formatted"] = f"${delta:,.0f} estimated change"
+            if pre_a is None or post_a is None:
+                out["delta"] = None
+                out["delta_formatted"] = (
+                    "N/A — one or both filings are scanned image PDFs. See source documents."
+                )
+            else:
+                delta = int(post_a) - int(pre_a)
+                out["delta"] = delta
+                out["delta_formatted"] = f"${delta:,.0f} estimated change"
         else:
             out["delta"] = None
             out["delta_formatted"] = "N/A — incomplete filing pair"
