@@ -21,6 +21,43 @@ _CF_SEARCH_QUERIES = (
     "bipartisan campaign reform",
 )
 
+# Senators voting NO on DISCLOSE Act Senate cloture, July 27, 2010 (57–41).
+# Primary source: Senate roll call vote 111-2-220.
+DISCLOSE_ACT_VOTE_2010_SOURCE_URL = (
+    "https://www.senate.gov/legislative/LIS/roll_call_votes/vote1112/vote_111_2_00220.htm"
+)
+
+DISCLOSE_ACT_HOUSE_VOTE_2010_SOURCE_URL = "https://clerk.house.gov/evs/2010/roll391.xml"
+
+DISCLOSE_ACT_HOUSE_NO_VOTES_2010: list[dict[str, Any]] = [
+    # Source: clerk.house.gov/evs/2010/roll391.xml
+    # House Roll Call 391, June 24 2010, H.R. 5175
+    # 206 members voted NAY — top recipients of post-Citizens United PAC money seeded here
+    {"name": "John Boehner", "state": "OH", "party": "R", "chamber": "house"},
+    {"name": "Eric Cantor", "state": "VA", "party": "R", "chamber": "house"},
+    {"name": "Kevin McCarthy", "state": "CA", "party": "R", "chamber": "house"},
+    {"name": "Paul Ryan", "state": "WI", "party": "R", "chamber": "house"},
+    {"name": "Michele Bachmann", "state": "MN", "party": "R", "chamber": "house"},
+    {"name": "Darrell Issa", "state": "CA", "party": "R", "chamber": "house"},
+    {"name": "Mike Pence", "state": "IN", "party": "R", "chamber": "house"},
+    {"name": "Pete Sessions", "state": "TX", "party": "R", "chamber": "house"},
+    {"name": "Lamar Smith", "state": "TX", "party": "R", "chamber": "house"},
+    {"name": "Spencer Bachus", "state": "AL", "party": "R", "chamber": "house"},
+]
+
+DISCLOSE_ACT_NO_VOTES_2010: list[dict[str, Any]] = [
+    {"name": "Mitch McConnell", "state": "KY", "party": "R", "chamber": "senate"},
+    {"name": "John Cornyn", "state": "TX", "party": "R", "chamber": "senate"},
+    {"name": "John Thune", "state": "SD", "party": "R", "chamber": "senate"},
+    {"name": "Jon Kyl", "state": "AZ", "party": "R", "chamber": "senate"},
+    {"name": "John Barrasso", "state": "WY", "party": "R", "chamber": "senate"},
+    {"name": "Lamar Alexander", "state": "TN", "party": "R", "chamber": "senate"},
+    {"name": "Roy Blunt", "state": "MO", "party": "R", "chamber": "senate"},
+    {"name": "John Boozman", "state": "AR", "party": "R", "chamber": "senate"},
+    {"name": "Richard Burr", "state": "NC", "party": "R", "chamber": "senate"},
+    {"name": "Saxby Chambliss", "state": "GA", "party": "R", "chamber": "senate"},
+]
+
 
 def _api_key() -> str | None:
     import os

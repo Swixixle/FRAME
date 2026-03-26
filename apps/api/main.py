@@ -381,6 +381,14 @@ class FinancialDisclosuresRequest(BaseModel):
 
     member_name: str = Field(..., min_length=1)
     chamber: str = Field(default="house")
+    include_delta: bool = True
+
+
+class WealthDeltaBulkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    members: list[str] = Field(..., min_length=1)
+    chamber: str = Field(default="house")
 
 
 class JudicialNetworkRequest(BaseModel):
@@ -1371,15 +1379,103 @@ async def congress_votes_post(body: CongressVotesRequest) -> dict[str, Any]:
 
 @app.post("/v1/financial-disclosures")
 async def financial_disclosures_post(body: FinancialDisclosuresRequest) -> dict[str, Any]:
-    from adapters.financial_disclosures import get_house_disclosures, get_senate_disclosures
+    from adapters.financial_disclosures import (
+        build_wealth_delta,
+        get_house_disclosures,
+        get_senate_disclosures,
+        senate_disclosure_stub_note,
+    )
 
     name = body.member_name.strip()
     chamber = (body.chamber or "house").strip().lower()
     if chamber == "senate":
         disclosures = await get_senate_disclosures(name)
+        stub = senate_disclosure_stub_note(name)
     else:
         disclosures = await get_house_disclosures(name)
-    return {"member_name": name, "chamber": chamber, "disclosures": disclosures}
+        stub = None
+    out: dict[str, Any] = {
+        "member_name": name,
+        "chamber": chamber,
+        "disclosures": disclosures,
+        "confidence_tier": "primary_financial_disclosure",
+    }
+    if stub is not None:
+        out["senate_disclosure_note"] = stub
+    if body.include_delta:
+        out["wealth_delta"] = await build_wealth_delta(name, chamber=chamber)
+    return out
+
+
+@app.post("/v1/wealth-delta")
+async def wealth_delta_bulk_post(body: WealthDeltaBulkRequest) -> dict[str, Any]:
+    from adapters.financial_disclosures import build_wealth_delta
+
+    members = [m.strip() for m in body.members if str(m).strip()][:5]  # cap 5 per request
+    chamber = (body.chamber or "house").strip().lower()
+    deltas = await asyncio.gather(*[build_wealth_delta(m, chamber=chamber) for m in members])
+
+    def _sort_key(d: dict[str, Any]) -> float:
+        v = d.get("delta")
+        if v is None:
+            return float("-inf")
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return float("-inf")
+
+    ranked = sorted(deltas, key=_sort_key, reverse=True)
+    return {
+        "chamber": chamber,
+        "deltas": ranked,
+        "note": (
+            "Members sorted by estimated asset increase between best 2008-2009 and 2011-2014 "
+            "House annual disclosure pairs (midpoint of self-reported ranges). "
+            "See source documents for verification."
+        ),
+        "confidence_tier": "primary_financial_disclosure",
+    }
+
+
+@app.get("/v1/disclose-act-no-votes")
+def disclose_act_no_votes_get() -> dict[str, Any]:
+    from adapters.congress_votes import (
+        DISCLOSE_ACT_NO_VOTES_2010,
+        DISCLOSE_ACT_VOTE_2010_SOURCE_URL,
+    )
+
+    return {
+        "bill": "H.R. 5175 — DISCLOSE Act (111th Congress)",
+        "vote": "Senate cloture, July 27, 2010 — 57 yeas, 41 nays (cloture not invoked; no vote on final passage).",
+        "primary_source_url": DISCLOSE_ACT_VOTE_2010_SOURCE_URL,
+        "members_voting_no": DISCLOSE_ACT_NO_VOTES_2010,
+        "note": (
+            "Ten senators seeded here voted NO on this cloture roll call; the complete nay list "
+            "is on the Senate roll call page (41 nays)."
+        ),
+    }
+
+
+@app.get("/v1/disclose-act-house-no-votes")
+def disclose_act_house_no_votes_get() -> dict[str, Any]:
+    from adapters.congress_votes import (
+        DISCLOSE_ACT_HOUSE_NO_VOTES_2010,
+        DISCLOSE_ACT_HOUSE_VOTE_2010_SOURCE_URL,
+    )
+
+    return {
+        "bill": "H.R. 5175 — DISCLOSE Act (111th Congress)",
+        "vote": (
+            "House Roll Call 391, June 24, 2010 — passed 219–206. Listed members voted NAY "
+            "(206 nays total; registry seeded with 10)."
+        ),
+        "primary_source_url": DISCLOSE_ACT_HOUSE_VOTE_2010_SOURCE_URL,
+        "members_voting_no": DISCLOSE_ACT_HOUSE_NO_VOTES_2010,
+        "note": (
+            "House members who voted against the House-passed DISCLOSE Act on this roll. "
+            "Full nay list is in the Clerk roll call XML."
+        ),
+    }
 
 
 @app.post("/v1/judicial-network")
