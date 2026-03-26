@@ -370,6 +370,25 @@ class GovInfoRequest(BaseModel):
     collections: list[str] = Field(default_factory=lambda: ["CREC", "FR", "STATUTE"])
 
 
+class CongressVotesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=1)
+
+
+class FinancialDisclosuresRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    member_name: str = Field(..., min_length=1)
+    chamber: str = Field(default="house")
+
+
+class JudicialNetworkRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query: str = Field(..., min_length=1)
+
+
 class AdLibraryRequest(BaseModel):
     name: str = Field(..., min_length=1)
     country: str = "US"
@@ -1330,6 +1349,52 @@ async def govinfo_post(body: GovInfoRequest) -> dict[str, Any]:
         "statutes": stats,
         "confidence_tier": "primary_legislative",
     }
+
+
+@app.post("/v1/congress-votes")
+async def congress_votes_post(body: CongressVotesRequest) -> dict[str, Any]:
+    """Congress.gov: query legislation search plus merged campaign-finance topic bills."""
+    from adapters import congress_votes as cv
+
+    q = body.query.strip()
+    legislation, campaign_finance_bills = await asyncio.gather(
+        cv.search_legislation(q, limit=5),
+        cv.get_campaign_finance_votes(),
+    )
+    return {
+        "query": q,
+        "legislation": legislation,
+        "campaign_finance_bills": campaign_finance_bills,
+        "confidence_tier": "primary_legislative",
+    }
+
+
+@app.post("/v1/financial-disclosures")
+async def financial_disclosures_post(body: FinancialDisclosuresRequest) -> dict[str, Any]:
+    from adapters.financial_disclosures import get_house_disclosures, get_senate_disclosures
+
+    name = body.member_name.strip()
+    chamber = (body.chamber or "house").strip().lower()
+    if chamber == "senate":
+        disclosures = await get_senate_disclosures(name)
+    else:
+        disclosures = await get_house_disclosures(name)
+    return {"member_name": name, "chamber": chamber, "disclosures": disclosures}
+
+
+@app.post("/v1/judicial-network")
+async def judicial_network_post(body: JudicialNetworkRequest) -> dict[str, Any]:
+    from adapters.judicial_disclosures import build_judicial_network
+
+    qn = body.query.strip()
+    result = await build_judicial_network(qn)
+    if not result:
+        return {
+            "query": qn,
+            "result": {},
+            "note": "No judicial network match for this query",
+        }
+    return result
 
 
 def generate_receipt_id() -> str:

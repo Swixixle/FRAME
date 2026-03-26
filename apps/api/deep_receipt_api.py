@@ -15,8 +15,10 @@ from typing import Any
 
 import httpx
 
+from adapters.congress_votes import search_legislation
 from adapters.courtlistener import get_opinion_by_citation, search_opinions
 from adapters.govinfo import search_congressional_record, search_statutes
+from adapters.judicial_disclosures import build_judicial_network
 from adapters.scholarly import search_openalex, search_semantic_scholar
 from frame_crypto import sign_frame_digest_hex
 from report_api import _frame_public_key_spki_b64, _jcs_canonicalize
@@ -332,23 +334,53 @@ async def build_deep_receipt(query: str) -> dict[str, Any]:
         fetched = await asyncio.gather(*[get_opinion_by_citation(c) for c in cite_list])
         return [x for x in fetched if isinstance(x, dict)]
 
-    oa, ss, cl_opinions, crec_rows, statute_rows, landmark_opinions = await asyncio.gather(
+    async def _legislation_for_receipt() -> list[dict[str, Any]]:
+        try:
+            return await search_legislation(q, 3)
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("deep-receipt legislation search failed: %s", exc)
+            return []
+
+    async def _judicial_network_for_receipt() -> dict[str, Any] | None:
+        try:
+            jn = await build_judicial_network(q)
+            if isinstance(jn, dict) and jn.get("majority"):
+                return jn
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("deep-receipt judicial network failed: %s", exc)
+        return None
+
+    (
+        oa,
+        ss,
+        cl_opinions,
+        crec_rows,
+        statute_rows,
+        landmark_opinions,
+        legislation_rows,
+        judicial_network_maybe,
+    ) = await asyncio.gather(
         search_openalex(q, 5),
         search_semantic_scholar(q, 5),
         search_opinions(q, 3),
         search_congressional_record(gov_q, 3),
         search_statutes(gov_q, 2),
         _landmark_opinions(),
+        _legislation_for_receipt(),
+        _judicial_network_for_receipt(),
     )
     legislative_records = _legislative_thread_entries(crec_rows, statute_rows)
     # landmark_opinions — highest-priority Layer B anchors (exact citation pulls).
     historical: dict[str, Any] = {
         "landmark_opinions": landmark_opinions,
         "judicial_opinions": cl_opinions,
+        "legislation": legislation_rows,
         "legislative_records": legislative_records,
         "openalex": oa,
         "semantic_scholar": ss,
     }
+    if judicial_network_maybe:
+        historical["judicial_network"] = judicial_network_maybe
 
     payload = _run_three_layer_ts(q, qtype, primary, historical)
 

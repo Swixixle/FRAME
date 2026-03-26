@@ -205,6 +205,15 @@ If judicial_opinions are present in historicalSources, you MUST use their URLs a
 
 If legislative_records are present in historicalSources (GovInfo Congressional Record + statute search), you MUST use their URLs as source_url values in layer_b ThreadEntries where the thread concerns legislative history, statutes, or floor debate. Prefer congressional_record and statute source_type values over academic_paper when those GovInfo URLs are available. Do not invent URLs — use exactly the URLs provided in the input data. judicial_opinions and legislative_records are co-equal primary categories for Layer B; both outrank scholarly DOIs when relevant.
 
+If judicial_network is present in historicalSources with a non-empty majority array,
+you MUST include every justice by full name in layer_b.mutations: exactly two ThreadEntries —
+one for the majority bloc (year: 2010, source_type: "judicial_vote", name all five majority justices,
+note who wrote the opinion) and one for the dissent (name all four dissenting justices,
+note who wrote the dissent). Use judicial_network.opinion_url as source_url for both. Never anonymize justices.
+
+If legislation is present, include key bills in layer_b.mutations with congress number,
+bill name, and vote result where available.
+
 Required shape (all keys present; use [] for empty arrays; strings may be empty only where the instructions allow):
 {
   "layer_a": { "lede": string, "findings": string, "gaps": string, "sources": PrimarySource[] },
