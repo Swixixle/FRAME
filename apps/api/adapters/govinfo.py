@@ -75,18 +75,43 @@ def _granule_class(raw: dict[str, Any]) -> str:
     return ""
 
 
-async def _post_search(collection: str, query: str, limit: int) -> list[dict[str, Any]]:
+def _filter_search_results(
+    results: list[Any],
+    *,
+    expected_collection: str,
+    max_rows: int,
+) -> list[dict[str, Any]]:
+    """Drop WCPD (presidential weekly compilation) and rows whose collectionCode disagrees."""
+    exp = expected_collection.strip().upper()
+    out: list[dict[str, Any]] = []
+    for raw in results:
+        if not isinstance(raw, dict):
+            continue
+        pid = str(raw.get("packageId") or "").strip()
+        if pid.upper().startswith("WCPD"):
+            continue
+        cc = str(raw.get("collectionCode") or "").strip().upper()
+        if cc and cc != exp:
+            continue
+        out.append(raw)
+        if len(out) >= max_rows:
+            break
+    return out
+
+
+async def _post_search(collection: str, user_query: str, limit: int) -> list[dict[str, Any]]:
     _warn_no_key()
     key = _api_key()
     if key is None:
         return []
-    q = (query or "").strip()
+    q = (user_query or "").strip()
     if not q:
         return []
     lim = min(max(limit, 1), 100)
+    fetch_size = min(max(lim * 6, lim), 100)
     body: dict[str, Any] = {
-        "query": q,
-        "pageSize": str(lim),
+        "query": f"{q} collection:{collection}",
+        "pageSize": str(fetch_size),
         "offsetMark": "*",
         "collections": [collection],
     }
@@ -107,11 +132,7 @@ async def _post_search(collection: str, query: str, limit: int) -> list[dict[str
     if not isinstance(results, list):
         return []
 
-    out: list[dict[str, Any]] = []
-    for raw in results[:lim]:
-        if isinstance(raw, dict):
-            out.append(raw)
-    return out
+    return _filter_search_results(results, expected_collection=collection, max_rows=lim)
 
 
 async def search_congressional_record(query: str, limit: int = 5) -> list[dict[str, Any]]:
