@@ -15,7 +15,12 @@ from typing import Any
 
 import httpx
 
-from adapters.congress_votes import search_legislation
+from adapters.congress_votes import (
+    DISCLOSE_ACT_HOUSE_NO_VOTES_2010,
+    DISCLOSE_ACT_NO_VOTES_2010,
+    search_legislation,
+)
+from adapters.financial_disclosures import build_wealth_delta
 from adapters.courtlistener import get_opinion_by_citation, search_opinions
 from adapters.govinfo import search_congressional_record, search_statutes
 from adapters.judicial_disclosures import build_judicial_network
@@ -77,6 +82,7 @@ def classify_query_type(query: str) -> str:
             "citizens united",
             "fundraising",
             "openfec",
+            "disclose",
         )
     ):
         return "campaign_finance"
@@ -306,6 +312,88 @@ def _merge_layer_a_sources(payload: dict[str, Any], adapter_sources: list[dict[s
     la["sources"] = adapter_sources
 
 
+def _extend_layer_a_sources(payload: dict[str, Any], extra: list[dict[str, Any]] | None) -> None:
+    if not extra:
+        return
+    la = payload.get("layer_a")
+    if not isinstance(la, dict):
+        return
+    cur = la.get("sources")
+    if not isinstance(cur, list):
+        cur = []
+    la["sources"] = cur + extra
+
+
+def _member_slug(name: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "-", name.lower().strip()).strip("-")
+    return s or "member"
+
+
+def _query_matches_registry_name(name: str, ql: str) -> bool:
+    n = name.strip().lower()
+    if not n:
+        return False
+    if n in ql:
+        return True
+    parts = n.split()
+    return bool(parts and parts[-1] in ql)
+
+
+def _disclose_act_registry_matches(query: str) -> list[tuple[str, str]]:
+    """(member_name, chamber) pairs for House/Senate DISCLOSE no-vote registries."""
+    ql = (query or "").lower()
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for row in [*DISCLOSE_ACT_HOUSE_NO_VOTES_2010, *DISCLOSE_ACT_NO_VOTES_2010]:
+        name = str(row.get("name") or "").strip()
+        ch = str(row.get("chamber") or "house").strip().lower()
+        if not name or not _query_matches_registry_name(name, ql):
+            continue
+        key = f"{name}|{ch}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((name, ch))
+    return out
+
+
+async def _wealth_delta_for_disclose_registry(
+    query: str, qtype: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Layer A primary_source rows + Claude context bundle."""
+    if qtype != "campaign_finance":
+        return [], []
+    matches = _disclose_act_registry_matches(query)
+    if not matches:
+        return [], []
+    now = _now_iso()
+    wds = await asyncio.gather(*[build_wealth_delta(n, chamber=c) for n, c in matches])
+    rows: list[dict[str, Any]] = []
+    bundle: list[dict[str, Any]] = []
+    for (name, chamber), wd in zip(matches, wds, strict=True):
+        slug = _member_slug(name)
+        sources = wd.get("sources") or []
+        pre_u = str(sources[0] if len(sources) > 0 else "").strip()
+        post_u = str(sources[1] if len(sources) > 1 else "").strip()
+        ch_label = "House" if chamber == "house" else "Senate"
+        rows.append(
+            {
+                "id": f"wealth-delta-{slug}",
+                "title": f"{ch_label} Financial Disclosure — {name} (pre/post Citizens United)",
+                "url": pre_u,
+                "url_post": post_u,
+                "adapter": "financial_disclosures",
+                "retrieved_at": now,
+                "estimated_assets_post": (wd.get("post_citizens_united") or {}).get("estimated_assets"),
+                "delta": wd.get("delta"),
+                "delta_formatted": wd.get("delta_formatted"),
+                "disclaimer": wd.get("disclaimer"),
+            }
+        )
+        bundle.append({"member_name": name, "chamber": chamber, "wealth_delta": wd})
+    return rows, bundle
+
+
 async def build_deep_receipt(query: str) -> dict[str, Any]:
     q = (query or "").strip()
     if not q:
@@ -359,6 +447,7 @@ async def build_deep_receipt(query: str) -> dict[str, Any]:
         landmark_opinions,
         legislation_rows,
         judicial_network_maybe,
+        wealth_pack,
     ) = await asyncio.gather(
         search_openalex(q, 5),
         search_semantic_scholar(q, 5),
@@ -368,7 +457,11 @@ async def build_deep_receipt(query: str) -> dict[str, Any]:
         _landmark_opinions(),
         _legislation_for_receipt(),
         _judicial_network_for_receipt(),
+        _wealth_delta_for_disclose_registry(q, qtype),
     )
+    wealth_primary_rows, wealth_bundle = wealth_pack
+    if wealth_bundle:
+        primary["wealth_delta_matches"] = wealth_bundle
     legislative_records = _legislative_thread_entries(crec_rows, statute_rows)
     # landmark_opinions — highest-priority Layer B anchors (exact citation pulls).
     historical: dict[str, Any] = {
@@ -390,6 +483,7 @@ async def build_deep_receipt(query: str) -> dict[str, Any]:
         fec_sources = fec_block.get("primary_sources")
     if isinstance(fec_sources, list):
         _merge_layer_a_sources(payload, fec_sources)
+    _extend_layer_a_sources(payload, wealth_primary_rows)
 
     deep_id = str(uuid.uuid4())
     payload["deep_receipt_id"] = deep_id

@@ -214,6 +214,16 @@ note who wrote the dissent). Use judicial_network.opinion_url as source_url for 
 If legislation is present, include key bills in layer_b.mutations with congress number,
 bill name, and vote result where available.
 
+If primarySources contains entries with adapter "financial_disclosures" (or wealth_delta_matches with build_wealth_delta output),
+include the member's disclosed asset figures in layer_a.findings. State the post-period estimated assets as a documented figure with the
+exact disclaimer that it is a midpoint estimate of self-reported ranges from federal Schedule A disclosures (or state that the figure is
+unavailable when estimated_assets_post is null). If delta is null due to scanned pre-period PDFs, state this explicitly — name the pre-period
+document URL (url from that primary source) and say it requires manual review or OCR to calculate the full delta. Never omit the disclaimer
+from the wealth_delta / primary source bundle. Never state a numeric pre/post delta when delta is null.
+
+When wealth_delta_matches is present in primarySources, incorporate those figures into why_this_matters: name the disclosed post-period asset
+totals where available and the honest limits (scanned pre-period, delta N/A) so the accountability question reflects what the filing record shows.
+
 Required shape (all keys present; use [] for empty arrays; strings may be empty only where the instructions allow):
 {
   "layer_a": { "lede": string, "findings": string, "gaps": string, "sources": PrimarySource[] },

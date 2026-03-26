@@ -5,6 +5,12 @@ export interface PrimarySource {
   url: string;
   adapter?: string;
   retrieved_at?: string;
+  /** House/Senate clerk PDF pair (deep receipt wealth-delta rows). */
+  url_post?: string;
+  estimated_assets_post?: number | null;
+  delta?: number | null;
+  delta_formatted?: string;
+  disclaimer?: string;
 }
 
 export interface VerifiedRecord {
