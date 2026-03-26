@@ -7,6 +7,8 @@
 
 Frame is epistemic infrastructure. It turns claims, public records, and institutional data into cryptographically signed, human-readable receipts that cannot be quietly revised after the fact. It is not a fact-checker that tells you what to believe. It is a record machine that tells you what the sources confirm, what they cannot confirm, and where to look next.
 
+**Production milestone (Citizens United):** `POST /v1/deep-receipt` with a campaign-finance / First Amendment class query can return **Layer B `mutations`** containing two **`judicial_vote`** ThreadEntries: the full **five-justice majority** and **four-justice dissent**, each by **full name**, with **Anthony Kennedy** noted as author of the majority opinion and **John Paul Stevens** as author of the dissent, **`source_url`** anchored to the **CourtListener** opinion for *Citizens United v. FEC* — inside the same **JCS-hashed, Ed25519-signed** payload as Layer C’s inference disclaimer. Downstream systems cannot strip or rewrite those fields without invalidating the signature.
+
 Rabbit Hole is Frame's sister product. Where Frame starts from a claim or a public figure, Rabbit Hole starts from a narrative — a conspiracy theory, a legend, a rumor, a myth — and traces how it originated, mutated, spread, and calcified into belief.
 
 Both products share the same cryptographic spine. Both are built to be read by a West Virginia voter, parsed by an AI summarizer in Singapore, and cited by a policy analyst in Brussels. The writing discipline required to serve all three simultaneously is the same: short sentences, no idioms, every number explained, every claim sourced in the same breath.
@@ -35,7 +37,7 @@ This is the thing that makes Frame not Wikipedia, not Snopes, not PolitiFact. Th
 **Before touching any code in a new session:**
 1. `curl -sS https://frame-2yxu.onrender.com/health` — confirm 200
 2. `cd ~/FRAME && git pull`
-3. Read this file and `docs/RABBIT_HOLE_CONTEXT.md` in full
+3. Read this file, `docs/HANDOFF_SESSION.md` (last milestone), and `docs/RABBIT_HOLE_CONTEXT.md` in full
 
 ---
 
@@ -58,13 +60,15 @@ FRAME/
 │   └── jcs-stringify.mjs       — Node subprocess for JCS canonicalization
 └── docs/
     ├── CONTEXT.md              — This file
+    ├── HANDOFF_SESSION.md      — Last-session deep-receipt / adapter handoff
     └── RABBIT_HOLE_CONTEXT.md  — Rabbit Hole specific context
 ```
 
-**Render start command:**
+**Render start command (`render.yaml`):**
 ```
-cd ../.. && npm run build && cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT
+cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT
 ```
+(`buildCommand` at repo root runs `npm ci`, `npm run build`, then `pip install -r apps/api/requirements.txt`.)
 
 **Node bridge:** Python API spawns Node subprocesses for TypeScript signing and adapter logic. This is intentional — the signing library (`@noble/ed25519`) lives in Node. Python calls it via subprocess.
 
@@ -114,8 +118,8 @@ Every Frame receipt and Rabbit Hole report is signed using Ed25519. The process:
 | `CONGRESS_API_KEY` | Congress.gov | Set |
 | `COURTLISTENER_API_KEY` | CourtListener judicial opinions + citation lookup | Set |
 | `GOVINFO_API_KEY` | GovInfo search (Congressional Record, FR, statutes) | Set |
-| `ASSEMBLYAI_API_KEY` | Podcast/audio transcription | Needs verification |
-| `SEC_EDGAR_USER_AGENT` | SEC policy requires contact email | Needs setting |
+| `ASSEMBLYAI_API_KEY` | Podcast/audio transcription | Set (production) |
+| `SEC_EDGAR_USER_AGENT` | SEC policy requires contact email | Set (production) |
 | `HIVE_API_KEY` | AI content detection | Not set, feature disabled |
 | `META_AD_LIBRARY_TOKEN` | Meta ad library | Not set |
 
@@ -205,6 +209,9 @@ POST /v1/sec-edgar                 — SEC EDGAR probe
 POST /v1/scholarly                 — Academic source search
 POST /v1/courtlistener             — Judicial opinion search
 POST /v1/govinfo                   — GovInfo legislative search (CREC / FR / STATUTE)
+POST /v1/congress-votes            — Congress.gov bill search + merged campaign-finance topic bills
+POST /v1/judicial-network          — Citizens United–class roster + opinion URL (query-gated)
+POST /v1/financial-disclosures     — House/Senate disclosure index search (HTML / JSON)
 POST /v1/verify-receipt            — Verify any signed receipt
 GET  /v1/status                   — Which env keys are set (values never exposed)
 GET  /v1/receipts/report/{id}      — Report receipt stub (PostgreSQL pending)
@@ -219,6 +226,9 @@ GET  /v1/receipts/report/{id}      — Report receipt stub (PostgreSQL pending)
 | `scholarly.py` | OpenAlex, Semantic Scholar, CrossRef | Open access academic papers, citation counts |
 | `courtlistener.py` | CourtListener API v3 + v4 | Opinion search, dockets, **citation-lookup** for U.S. Reports cites, landmark pulls in deep-receipt |
 | `govinfo.py` | GovInfo API | Congressional Record, Federal Register, statutes (Layer B) |
+| `congress_votes.py` | Congress.gov API | `search_legislation`, `get_bill_votes`, `search_member`, `get_campaign_finance_votes`; wired to deep-receipt `legislation` and `/v1/congress-votes` |
+| `judicial_disclosures.py` | Documented roster + CourtListener URL | `get_citizens_united_justices`, `build_judicial_network` → deep-receipt `judicial_network` when query matches |
+| `financial_disclosures.py` | disclosures.house.gov, efts.senate.gov | `get_house_disclosures`, `get_senate_disclosures`; `/v1/financial-disclosures` only (not inlined in deep-receipt — slow / fragile HTML) |
 
 **SEC EDGAR known limitation:** Name search for politicians resolves poorly — EDGAR is company-centric. Fallback searches Form 4 filings to find entities a person filed as reporting owner. For politicians, FEC is the primary source; EDGAR is supplementary.
 
@@ -331,7 +341,7 @@ POST /v1/verify-receipt              — shared with Frame
 - Rule Change Receipt not implemented — baselines captured, drift detection not wired
 - Source URL verification — LLM occasionally suggests URLs that 404
 - `POST /frames` dossier enrichment pipeline (ARQ + Redis) not tested in production
-- Congressional voting record cross-reference with FEC not built
+- Congress.gov bills merged into deep-receipt `legislation` when `CONGRESS_API_KEY` is set; per-bill roll-call depth and FEC crosswalk remain incremental work
 - SEC and LDA receipt narrative not yet upgraded to four-section Sonnet prompt (FEC is done, others pending)
 
 ### Research adapters — shipped (deep-receipt Layer B)
@@ -339,6 +349,9 @@ POST /v1/verify-receipt              — shared with Frame
 |---------|--------|--------|
 | `courtlistener.py` | CourtListener REST v3/v4 | **Live** — `judicial_opinions` (search), **`landmark_opinions`** (registry + **citation-lookup** for e.g. 558 U.S. 310, 424 U.S. 1), full opinion text cap; `POST /v1/courtlistener`. |
 | `govinfo.py` | GovInfo search API | **Live** — targeted queries → `legislative_records` + `POST /v1/govinfo`; CREC results filtered client-side. |
+| `congress_votes.py` | Congress.gov | **Live** — `legislation` + `POST /v1/congress-votes` (`campaign_finance_bills` merged search). |
+| `judicial_disclosures.py` | Primary record roster | **Live** — `judicial_network` in deep-receipt when query matches; drives **nine-justice** Layer B `judicial_vote` text + **opinion_url**. |
+| `financial_disclosures.py` | House / Senate indices | **Live** — `POST /v1/financial-disclosures` only. |
 
 ### Research Adapters Not Yet Built
 | Adapter | Source | Value |
@@ -356,7 +369,7 @@ POST /v1/verify-receipt              — shared with Frame
 
 A Frame deep receipt on "Citizens United" should eventually contain:
 
-**Where it is today:** `POST /v1/deep-receipt` combines **landmark citation resolution** (CourtListener **v4 citation-lookup** for reporter cites such as **558 U.S. 310**, **424 U.S. 1**) with **search hits**, **GovInfo** legislative rows, and **scholarship**. On matching queries, Layer B can place **Buckley**, **Austin**, and **Citizens United** in chronological thread with **real opinion URLs** and **`source_type: "landmark_opinion"`**; `sourcing_completeness` may read **`"full"`** when the model and sources align. Stochastic ordering still varies by run; **GovInfo** CREC relevance is query-tuned, not perfect.
+**Where it is today:** `POST /v1/deep-receipt` combines **landmark citation resolution** (CourtListener **v4 citation-lookup** for **558 U.S. 310**, **424 U.S. 1**, **494 U.S. 652**, …) with **search hits**, **GovInfo** legislative rows, **Congress.gov** `legislation` (when keyed), **`judicial_network`** (roster + **opinion_url**), and **scholarship**. Production runs show **Layer B `mutations`** with **`landmark_opinion`** and **`judicial_vote`** rows: **all nine justices** named with roles, majority opinion author (**Kennedy**), dissent author (**Stevens**), anchored to the **CourtListener** Citizens United URL — **signed** with the same payload as Layer C’s disclaimer. `sourcing_completeness` can read **`"full"`** when sources and the model align. Stochastic ordering can still vary by run; **GovInfo** relevance is query-tuned.
 
 **Layer A:** FEC data showing who gave what to which PACs after 2010, with exact figures, exact dates, exact committee names. Gaps naming the specific Form 3 filings that would show individual contributor details.
 
@@ -384,4 +397,4 @@ That is the product. Everything being built is in service of that output being p
 
 ---
 
-*This document should be updated at the end of every significant session. If you found this in a bottle, start with the health check, read Rabbit Hole context, then look at the known gaps list. Layer B is no longer empty for flagship legal-finance queries; next wins are voting records, lobbying depth, and cross-source linking named in known gaps.*
+*This document should be updated at the end of every significant session. If you found this in a bottle, start with the health check, read Rabbit Hole context, then look at the known gaps list. Layer B for flagship legal-finance queries now includes **landmark opinions**, **judicial_network–driven justice names**, and (when keyed) **Congress.gov legislation**; next wins are roll-call depth, lobbying narrative parity, and cross-source linking named in known gaps.*
