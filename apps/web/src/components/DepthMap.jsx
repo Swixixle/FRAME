@@ -166,7 +166,11 @@ function SurfaceTraceFields({
       <div className="depth-who">
         <strong>Who</strong>
         <ul>
-          {(trace.who || []).map((w) => {
+          {[...(trace.who || [])]
+            .sort((a, b) =>
+              String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase()),
+            )
+            .map((w) => {
             const { checked, resolvedSlug, inLedger } = actorLedgerResolved(
               w.name,
               ledgerPresence,
@@ -299,7 +303,9 @@ function ActorDepthResultBody({ data }) {
   if (!data || typeof data !== "object" || data.error) return null;
   const found = data.actors_found || [];
   const absent = data.actors_absent || [];
-  const checks = data.sources_checked || [];
+  const checks = [...(data.sources_checked || [])].sort((a, b) =>
+    String(a.adapter).localeCompare(String(b.adapter)),
+  );
   return (
     <div className="actor-depth-result">
       {checks.length > 0 ? (
@@ -376,7 +382,7 @@ function ActorDepthResultBody({ data }) {
               ) : null}
               {(actor.events || []).length > 0 ? (
                 <ul className="actor-events-compact">
-                  {(actor.events || []).slice(0, 12).map((ev, j) => {
+                  {(actor.events || []).map((ev, j) => {
                     const src = String(ev.source || "").trim();
                     const srcIsUrl = /^https?:\/\//i.test(src);
                     return (
@@ -692,7 +698,11 @@ function ActorLayerFields({ actorLayer, onActorDepth, actorDepthByEntity, actorD
                     <div className="depth-spread-block">
                       <strong>Who</strong>
                       <ul className="depth-spread-list">
-                        {a.surface_who.map((w) => (
+                        {[...a.surface_who]
+                          .sort((x, y) =>
+                            String(x.name || "").toLowerCase().localeCompare(String(y.name || "").toLowerCase()),
+                          )
+                          .map((w) => (
                           <li key={w.name}>
                             {w.name} <TierBadge tier={w.confidence_tier} />
                           </li>
@@ -907,14 +917,15 @@ function sourcesCheckedStatusClass(status) {
 
 function SourcesCheckedManifest({ entries }) {
   if (!entries || entries.length === 0) return null;
-  const found = entries.filter((e) => e.status === "found").length;
+  const sorted = [...entries].sort((a, b) => String(a.adapter).localeCompare(String(b.adapter)));
+  const found = sorted.filter((e) => e.status === "found").length;
   return (
     <details className="depth-sources-checked-wrap">
       <summary className="depth-sources-checked-summary">
-        {entries.length} sources checked — {found} returned results
+        {sorted.length} sources checked — {found} returned results
       </summary>
       <ul className="depth-sources-checked-list">
-        {entries.map((e) => (
+        {sorted.map((e) => (
           <li key={e.adapter} className="depth-sources-checked-row">
             <code>{e.adapter}</code>
             <span className={`depth-sc-badge ${sourcesCheckedStatusClass(e.status)}`}>{e.status}</span>
@@ -983,7 +994,9 @@ function FiveRingReportPanel({ report, loading, error }) {
                     <strong>Article cites:</strong> {c.cited_source}
                   </div>
                 ) : null}
-                {(c.verifications || []).map((v, j) => (
+                {[...(c.verifications || [])]
+                  .sort((a, b) => String(a.adapter).localeCompare(String(b.adapter)))
+                  .map((v, j) => (
                   <div key={j} className="verification-row">
                     <span className="adapter-name">{v.adapter}</span>
                     <span className={`status-badge status-${v.status}`}>{v.status}</span>

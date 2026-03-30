@@ -469,6 +469,51 @@ function dedupeEventsBySourceUrl(events: ActorEvent[]): ActorEvent[] {
   return out;
 }
 
+const BLOCKED_SOURCE_DOMAINS = [
+  "celebheights.com",
+  "personality-database.com",
+  "dimensions.com",
+  "starsunfolded.com",
+  "anythinglefthanded.co.uk",
+  "mako.co.il",
+  "srugim.co.il",
+  "amitsegal.co.il",
+  "news.walla.co.il",
+];
+
+function isBlockedSource(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    return BLOCKED_SOURCE_DOMAINS.some((d) => hostname === d || hostname.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+const DEPRIORITIZED_EVENT_TYPES = [
+  "wikidata_reference_url",
+  "wikipedia_reference_url",
+  "wikidata_anchor",
+];
+
+/** Filter junk URLs, move wiki-derived events last, cap count — applied to API-bound records only. */
+function finalizeActorRecordForResponse(actor: ActorRecord): void {
+  let events = [...(actor.events ?? [])];
+  events = events.filter((e) => !isBlockedSource(e.source));
+  events = [
+    ...events.filter((e) => !DEPRIORITIZED_EVENT_TYPES.includes(e.type)),
+    ...events.filter((e) => DEPRIORITIZED_EVENT_TYPES.includes(e.type)),
+  ];
+  actor.events = events.slice(0, 15);
+
+  if (actor.surface_who?.length) {
+    actor.surface_who = [...actor.surface_who].sort((a, b) =>
+      (a.name || "").toLowerCase().localeCompare((b.name || "").toLowerCase()),
+    );
+  }
+}
+
 function dedupeLookupSources(sources: ActorLookupSource[]): ActorLookupSource[] {
   return [...new Set(sources)];
 }
@@ -1313,6 +1358,10 @@ export async function getActorLayer(input: { narrative: string }): Promise<Actor
     } else {
       actors_absent.push({ name, absent: true, wikidata_attempted: true });
     }
+  }
+
+  for (const actor of foundBySlug.values()) {
+    finalizeActorRecordForResponse(actor);
   }
 
   const actors_found = [...foundBySlug.values()].sort((a, b) =>

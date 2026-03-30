@@ -74,7 +74,7 @@ export default function ReceiptView({
       seen.add(k);
       out.push(n);
     }
-    return out;
+    return out.sort((a, b) => String(a).toLowerCase().localeCompare(String(b).toLowerCase()));
   }, [claims, receipt.meta]);
 
   const rid = receipt.receiptId || "—";
@@ -202,7 +202,9 @@ export default function ReceiptView({
                         <strong>Article cites:</strong> {c.cited_source}
                       </div>
                     ) : null}
-                    {(c.verifications || []).map((v, j) => (
+                    {[...(c.verifications || [])]
+                      .sort((a, b) => String(a.adapter).localeCompare(String(b.adapter)))
+                      .map((v, j) => (
                       <div key={j} className="verification-row">
                         <span className="adapter-name">{v.adapter}</span>
                         <span className={`status-badge status-${v.status}`}>{v.status}</span>

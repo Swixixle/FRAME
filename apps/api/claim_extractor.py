@@ -67,7 +67,13 @@ def extract_claims(article_text: str, title: Optional[str] = None) -> dict[str, 
         if raw.startswith("```"):
             raw = re.sub(r"^```[a-z]*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
-        return json.loads(raw)
+        result: dict[str, Any] = json.loads(raw)
+        if isinstance(result.get("named_entities"), list):
+            result["named_entities"] = sorted(
+                [str(x) for x in result["named_entities"] if x is not None],
+                key=lambda x: x.lower(),
+            )
+        return result
     except json.JSONDecodeError as e:
         return {
             "claims": [],

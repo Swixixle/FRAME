@@ -62,6 +62,21 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _sort_surface_who_in_result(result: dict[str, Any]) -> None:
+    who = result.get("who")
+    if isinstance(who, list) and who:
+        result["who"] = sorted(
+            who,
+            key=lambda x: str((x or {}).get("name") or "").lower(),
+        )
+    sw = result.get("surface_who")
+    if isinstance(sw, list) and sw:
+        result["surface_who"] = sorted(
+            sw,
+            key=lambda x: str((x or {}).get("name") or "").lower(),
+        )
+
+
 _MEDIA_AUDIO_EXT = re.compile(r"\.(mp3|m4a|wav|ogg|opus|webm|flac)(\?|#|$)", re.I)
 _PODCAST_RSS = re.compile(r"\.(rss|xml)(\?|#|$)", re.I)
 _MEDIA_HOST = re.compile(
@@ -187,7 +202,7 @@ def map_podcast_to_surface(pod: dict[str, Any], source_url: str) -> dict[str, An
     if not who:
         who = [{"name": f'Source: {title[:120]}', "confidence_tier": "single_source"}]
 
-    return {
+    out: dict[str, Any] = {
         "what": what,
         "cultural_substrate": None,
         "what_confidence_tier": "single_source",
@@ -200,6 +215,8 @@ def map_podcast_to_surface(pod: dict[str, Any], source_url: str) -> dict[str, An
         "media_claims": media_claims,
         "podcast_note": pod.get("note"),
     }
+    _sort_surface_who_in_result(out)
+    return out
 
 
 def run_podcast_layer(url: str) -> dict[str, Any]:
@@ -310,10 +327,15 @@ def run_surface_layer(body: dict[str, Any]) -> dict[str, Any]:
     if candidate_url:
         kind = detect_input_type(candidate_url)
         if kind == "media_url":
-            return run_podcast_layer(candidate_url)
-        return _run_node_surface({"url": candidate_url})
+            out = run_podcast_layer(candidate_url)
+        else:
+            out = _run_node_surface({"url": candidate_url})
+        _sort_surface_who_in_result(out)
+        return out
 
     if not narrative:
         raise RuntimeError("Provide narrative or url")
 
-    return _run_node_surface({"narrative": narrative})
+    out = _run_node_surface({"narrative": narrative})
+    _sort_surface_who_in_result(out)
+    return out
