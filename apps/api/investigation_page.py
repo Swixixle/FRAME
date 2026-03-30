@@ -1,32 +1,16 @@
 """
-investigation_page.py  (v3 — correct volatility color logic + gap strip)
+investigation_page.py  (v4 — human-first, beloved)
 
-Changes from v2:
-- Volatility color logic fixed: green=calm, orange=contested, red=chaos
-  * 0-25:  green  "Most outlets agree on the basic facts."
-  * 26-60: orange "Facts overlap, framing fights."
-  * 61-100: red   "Different worlds — same story, opposing realities."
-- Volatility rendered as VOLATILITY 66 pill (colored bg, white number)
-- Irreconcilable gap moved to labeled strip directly under the pill — always visible
-- Coalition chains moved below the gap, visually secondary
-- h1 font-family quote fix (Syne not "Syne")
-- Narrative moved after coalition section so fight is truly first thing after hook
-
-Wire into main.py (unchanged from v2):
-
-    from investigation_page import render_investigation_page
-    from fastapi.responses import HTMLResponse
-
-    @app.get("/i/{receipt_id}", response_class=HTMLResponse)
-    async def investigation_page(receipt_id: str):
-        receipt = await asyncio.to_thread(get_receipt, receipt_id)
-        if not receipt:
-            raise HTTPException(status_code=404, detail="Investigation not found")
-        try:
-            coalition = await asyncio.to_thread(get_coalition_map, receipt_id)
-        except Exception:
-            coalition = None
-        return HTMLResponse(render_investigation_page(receipt, coalition))
+Changes from v3:
+- Volatility: 0-25 green, 26-60 amber (#e8a020), 61-100 red. Amber is clearly yellow-orange.
+- "Why this number?" inline explainer link
+- Two anchor cards as hero, chains collapsed behind "Who's on each side" toggle
+- Chain preview: "Backed by N outlets in N countries" before expand
+- Human language throughout: "Where the story splits", "What no one is talking about",
+  "What everyone agrees on", "Who's on each side"
+- Empty state copy that sounds like a person
+- coalition_map label replaced with "who's on each side" in UI
+- JS-powered accordion for chains (no page reload)
 """
 
 from __future__ import annotations
@@ -38,21 +22,24 @@ def _e(s: Any) -> str:
     return html.escape(str(s) if s is not None else "")
 
 
-def _vol_theme(vol: int) -> tuple[str, str, str, str]:
-    """Returns (pill_bg, pill_border, number_color, copy) for the volatility bucket."""
+def _vol_theme(vol: int) -> tuple[str, str, str, str, str]:
+    """Returns (pill_bg, pill_border, accent, short_copy, bucket_label)"""
     if vol <= 25:
-        return "#0a2218", "#0d3d2a", "#3ecf8e", "Most outlets agree on the basic facts."
+        return "#0a2218", "#0d3d2a", "#3ecf8e", \
+               "Most outlets agree on the basics.", "Low"
     elif vol <= 60:
-        return "#2e1f06", "#3d2a08", "#e8a020", "Facts overlap, framing fights."
+        return "#2a1c04", "#3d2a06", "#e8a020", \
+               "Same facts, different spin.", "Moderate"
     else:
-        return "#2e0a0a", "#3d0e0e", "#e05050", "Different worlds — same story, opposing realities."
+        return "#2e0a0a", "#3d0e0e", "#e05050", \
+               "Parallel realities.", "High"
 
 
 def _pills(items: list, color: str) -> str:
     palette = {
         "green": ("#0a2218", "#3ecf8e", "#0d2e20"),
         "red":   ("#2e0a0a", "#e05050", "#3d0e0e"),
-        "amber": ("#2e1f06", "#e8a020", "#3d2a08"),
+        "amber": ("#2a1c04", "#e8a020", "#3d2a06"),
         "blue":  ("#0a1a2e", "#5b9fff", "#0d2240"),
         "gray":  ("#1a1a1a", "#9e9a93", "#222"),
     }
@@ -76,13 +63,22 @@ def _outlet_badge(otype: str) -> str:
             f'border-radius:3px;background:{bg};color:{fg};font-weight:600">{label}</span>')
 
 
-def _chain_rows(chain: list) -> str:
+def _chain_preview(chain: list) -> str:
+    """Short summary: 'Backed by 6 outlets in 4 countries'"""
     if not chain:
-        return '<div style="font-size:12px;color:#5a5752;padding:12px 0">—</div>'
+        return "No outlets mapped yet"
+    countries = len(set(c.get("country","") for c in chain if c.get("country")))
+    return f"Backed by {len(chain)} outlet{'s' if len(chain)!=1 else ''} in {countries} countr{'ies' if countries!=1 else 'y'}"
+
+
+def _chain_items_html(chain: list, side_id: str) -> str:
+    if not chain:
+        return '<div style="font-size:12px;color:#5a5752;padding:12px 0">No outlets mapped yet.</div>'
     rows = []
     for item in chain:
         conf = item.get("alignment_confidence", "medium")
         dot = {"high": "#3ecf8e", "medium": "#e8a020", "low": "#5a5752"}.get(conf, "#5a5752")
+        note = item.get("alignment_note", "")
         rows.append(
             f'<div style="display:flex;gap:10px;align-items:flex-start;'
             f'padding:10px 0;border-bottom:0.5px solid rgba(255,255,255,0.05)">'
@@ -94,8 +90,7 @@ def _chain_rows(chain: list) -> str:
             f'{_e(item.get("outlet",""))}</span>'
             f'<span style="font-size:10px;color:#5a5752">{_e(item.get("country",""))}</span>'
             f'{_outlet_badge(item.get("outlet_type",""))}</div>'
-            f'<div style="font-size:12px;color:#9e9a93;line-height:1.5">'
-            f'{_e(item.get("alignment_note",""))}</div>'
+            f'<div style="font-size:12px;color:#9e9a93;line-height:1.5">{_e(note)}</div>'
             f'</div>'
             f'<div style="width:6px;height:6px;border-radius:50%;background:{dot};'
             f'flex-shrink:0;margin-top:6px"></div>'
@@ -105,7 +100,6 @@ def _chain_rows(chain: list) -> str:
 
 
 def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
-    # ── Receipt ──────────────────────────────────────────────────
     rid         = receipt.get("receipt_id") or receipt.get("report_id", "")
     rtype       = receipt.get("receipt_type", "article_analysis")
     signed      = receipt.get("signed", False)
@@ -121,7 +115,6 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     confirmed   = receipt.get("confirmed", [])
     what_nobody = receipt.get("what_nobody_is_covering", [])
 
-    # ── Coalition ────────────────────────────────────────────────
     contested_claim = irreconcilable_gap = coalition_note = ""
     divergence_score = 0
     what_both = []
@@ -137,7 +130,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
         coalition_note     = coalition.get("coalition_map_note", "")
 
     vol = min(100, max(0, divergence_score))
-    pill_bg, pill_border, num_color, vol_copy = _vol_theme(vol)
+    pill_bg, pill_border, accent, vol_copy, vol_bucket = _vol_theme(vol)
 
     signed_badge = (
         '<span style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;'
@@ -163,10 +156,10 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     b_chain   = pos_b.get("chain",     []) if pos_b else []
 
     nobody_html = "".join(
-        f'<div style="display:flex;gap:10px;padding:8px 14px;border-radius:8px;'
+        f'<div style="display:flex;gap:10px;padding:9px 14px;border-radius:8px;'
         f'background:rgba(232,160,32,0.06);margin-bottom:6px;'
-        f'border:0.5px solid rgba(232,160,32,0.15)">'
-        f'<span style="color:#e8a020;flex-shrink:0">◈</span>'
+        f'border:0.5px solid rgba(232,160,32,0.14)">'
+        f'<span style="color:#e8a020;flex-shrink:0;margin-top:1px">◈</span>'
         f'<span style="font-size:13px;color:#e8a020;line-height:1.5">{_e(w)}</span></div>'
         for w in what_nobody[:6]
     )
@@ -207,59 +200,82 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
             ("Timestamp",      timestamp,  "#9e9a93"),
             ("Schema version", schema_ver, "#9e9a93"),
             ("Signing key",
-             (public_key[:28] + "…") if public_key else "—",
-             "#9e9a93"),
+             (public_key[:28] + "…") if public_key else "—", "#9e9a93"),
         ]
     )
 
-    # ── Coalition section (fight-first) ─────────────────────────
-    coalition_section = ""
+    # ── No-coalition empty state ─────────────────────────────────
+    no_coalition_html = """
+<div style="padding:32px 24px;border:0.5px solid rgba(255,255,255,0.07);
+            border-radius:12px;background:#111;text-align:center;margin-bottom:40px">
+  <div style="font-size:15px;color:#5a5752;line-height:1.7">
+    We don't see enough disagreement here to map a split story yet.
+  </div>
+  <div style="font-size:12px;color:#3a3a3a;margin-top:8px">
+    Coalition analysis runs in the background — check back in a minute.
+  </div>
+</div>"""
+
+    # ── Coalition section ────────────────────────────────────────
+    coalition_section = no_coalition_html
     if coalition:
+        a_preview = _chain_preview(a_chain)
+        b_preview = _chain_preview(b_chain)
+        a_chain_html = _chain_items_html(a_chain, "a")
+        b_chain_html = _chain_items_html(b_chain, "b")
+
         coalition_section = f"""
-<!-- ── VOLATILITY PILL ── -->
-<div style="margin-bottom:24px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
-  <div>
-    <span style="display:inline-flex;align-items:center;gap:10px;
-                 padding:8px 18px;border-radius:24px;
-                 background:{pill_bg};border:0.5px solid {pill_border}">
-      <span style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
-                   color:{num_color};font-weight:600">VOLATILITY</span>
-      <span style="font-family:Syne,sans-serif;font-size:26px;font-weight:800;
-                   color:#f0ede8;line-height:1;letter-spacing:-0.02em">{vol}</span>
-      <span style="font-size:13px;color:{num_color};opacity:0.7">/ 100</span>
-    </span>
-    <div style="font-size:12px;color:#9e9a93;margin-top:8px;padding-left:2px">{_e(vol_copy)}</div>
+<!-- VOLATILITY PILL -->
+<div style="margin-bottom:24px">
+  <div style="display:inline-flex;align-items:center;gap:12px;
+              padding:10px 20px;border-radius:28px;
+              background:{pill_bg};border:0.5px solid {pill_border}">
+    <span style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
+                 color:{accent};font-weight:600">VOLATILITY</span>
+    <span style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;
+                 color:#f0ede8;line-height:1;letter-spacing:-0.02em">{vol}</span>
+    <span style="font-size:12px;color:{accent};opacity:0.6">/ 100</span>
+  </div>
+  <div style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-left:2px">
+    <span style="font-size:13px;color:#9e9a93">{_e(vol_copy)}</span>
+    <button onclick="toggleWhyNumber()" style="font-size:11px;color:#5a5752;
+            background:none;border:none;cursor:pointer;padding:0;
+            text-decoration:underline;text-underline-offset:3px">
+      Why this number?
+    </button>
+  </div>
+  <div id="why-number" style="display:none;margin-top:10px;padding:12px 16px;
+       border-radius:8px;background:#111;border:0.5px solid rgba(255,255,255,0.08);
+       font-size:12px;color:#9e9a93;line-height:1.6;max-width:520px">
+    The volatility score measures how far apart the two most opposed outlet clusters
+    are on this story — based on what each side emphasizes vs. minimizes, and how
+    confidently they hold those positions. It's not a vibe: it's calculated from the
+    actual emphasis and omission tags in the source analysis. 0 = everyone agrees.
+    100 = parallel realities with no shared premise.
   </div>
 </div>
 
-<!-- ── IRRECONCILABLE GAP — always visible, directly under pill ── -->
+<!-- IRRECONCILABLE GAP — always visible -->
 <div style="margin-bottom:32px;padding:18px 22px;
-            border-left:3px solid {num_color};
+            border-left:3px solid {accent};
             background:{pill_bg};border-radius:0 10px 10px 0">
   <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
-              color:{num_color};margin-bottom:8px;font-weight:600">The irreconcilable gap</div>
+              color:{accent};margin-bottom:8px;font-weight:600">Where the story splits</div>
   <div style="font-size:15px;color:#f0ede8;line-height:1.7">{_e(irreconcilable_gap)}</div>
 </div>
 
-<!-- ── CONTESTED CLAIM ── -->
-<div style="margin-bottom:32px">
-  <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
-              color:#5a5752;margin-bottom:10px">The contested claim</div>
-  <div style="border-left:3px solid rgba(255,255,255,0.15);padding:12px 18px;
-              font-size:14px;color:#9e9a93;line-height:1.7;font-style:italic">
-    {_e(contested_claim)}
-  </div>
-</div>
-
-<!-- ── TWO SIDES ── -->
+<!-- TWO ANCHOR CARDS -->
 <div style="display:flex;gap:1px;background:rgba(255,255,255,0.06);
-            border-radius:14px;overflow:hidden;margin-bottom:8px">
+            border-radius:14px;overflow:hidden;margin-bottom:24px">
+
+  <!-- SIDE A -->
   <div style="flex:1;background:#0e0e0e;padding:24px 22px">
     <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
                 color:#5b9fff;margin-bottom:8px">{_e(a_anchor)}</div>
     <div style="font-family:Syne,sans-serif;font-size:19px;font-weight:700;
                 color:#f0ede8;margin-bottom:10px;line-height:1.2">{_e(a_label)}</div>
-    <div style="font-size:13px;color:#9e9a93;line-height:1.6;margin-bottom:16px">{_e(a_summary)}</div>
+    <div style="font-size:13px;color:#9e9a93;line-height:1.6;margin-bottom:16px">
+      {_e(a_summary)}</div>
     <div style="margin-bottom:10px">
       <div style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;
                   color:#5a5752;margin-bottom:5px">Emphasizes</div>
@@ -271,18 +287,23 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
       {_pills(a_mn, "red")}
     </div>
   </div>
+
+  <!-- VS -->
   <div style="display:flex;align-items:center;justify-content:center;
               background:#0e0e0e;padding:0 4px;min-width:36px">
     <span style="background:#111;border:0.5px solid rgba(255,255,255,0.1);
                  border-radius:20px;padding:5px 8px;
                  font-size:10px;font-weight:700;color:#5a5752">VS</span>
   </div>
+
+  <!-- SIDE B -->
   <div style="flex:1;background:#0e0e0e;padding:24px 22px">
     <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
                 color:#e05050;margin-bottom:8px">{_e(b_anchor)}</div>
     <div style="font-family:Syne,sans-serif;font-size:19px;font-weight:700;
                 color:#f0ede8;margin-bottom:10px;line-height:1.2">{_e(b_label)}</div>
-    <div style="font-size:13px;color:#9e9a93;line-height:1.6;margin-bottom:16px">{_e(b_summary)}</div>
+    <div style="font-size:13px;color:#9e9a93;line-height:1.6;margin-bottom:16px">
+      {_e(b_summary)}</div>
     <div style="margin-bottom:10px">
       <div style="font-size:9px;letter-spacing:0.1em;text-transform:uppercase;
                   color:#5a5752;margin-bottom:5px">Emphasizes</div>
@@ -296,31 +317,68 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   </div>
 </div>
 
-<!-- ── CHAINS (visually secondary, below the gap) ── -->
-<div style="display:flex;gap:16px;margin-bottom:40px;flex-wrap:wrap;margin-top:20px">
-  <div style="flex:1;min-width:260px;border:0.5px solid rgba(255,255,255,0.08);
-              border-radius:12px;background:#111;overflow:hidden">
-    <div style="padding:12px 18px;border-bottom:0.5px solid rgba(255,255,255,0.06);
-                background:rgba(56,132,255,0.04)">
-      <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
-                  color:#5b9fff;margin-bottom:2px">Aligned with</div>
-      <div style="font-size:13px;font-weight:600;color:#f0ede8">{_e(a_label)}</div>
+<!-- WHO'S ON EACH SIDE — collapsed by default -->
+<div style="margin-bottom:40px">
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+
+    <!-- Side A toggle -->
+    <div style="flex:1;min-width:240px;border:0.5px solid rgba(255,255,255,0.08);
+                border-radius:12px;background:#111;overflow:hidden">
+      <button onclick="toggleChain('chain-a')"
+              style="width:100%;padding:14px 18px;background:none;border:none;
+                     cursor:pointer;text-align:left;
+                     border-bottom:0.5px solid rgba(255,255,255,0.06)">
+        <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
+                    color:#5b9fff;margin-bottom:3px">Who's on this side</div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:600;color:#f0ede8">{_e(a_label)}</div>
+          <div style="font-size:12px;color:#5a5752;display:flex;align-items:center;gap:6px">
+            <span>{_e(a_preview)}</span>
+            <span id="chain-a-arrow" style="transition:transform 0.2s">▾</span>
+          </div>
+        </div>
+      </button>
+      <div id="chain-a" style="display:none;padding:4px 18px 12px">
+        {a_chain_html}
+      </div>
     </div>
-    <div style="padding:4px 18px 12px">{_chain_rows(a_chain)}</div>
-  </div>
-  <div style="flex:1;min-width:260px;border:0.5px solid rgba(255,255,255,0.08);
-              border-radius:12px;background:#111;overflow:hidden">
-    <div style="padding:12px 18px;border-bottom:0.5px solid rgba(255,255,255,0.06);
-                background:rgba(224,80,80,0.04)">
-      <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
-                  color:#e05050;margin-bottom:2px">Aligned with</div>
-      <div style="font-size:13px;font-weight:600;color:#f0ede8">{_e(b_label)}</div>
+
+    <!-- Side B toggle -->
+    <div style="flex:1;min-width:240px;border:0.5px solid rgba(255,255,255,0.08);
+                border-radius:12px;background:#111;overflow:hidden">
+      <button onclick="toggleChain('chain-b')"
+              style="width:100%;padding:14px 18px;background:none;border:none;
+                     cursor:pointer;text-align:left;
+                     border-bottom:0.5px solid rgba(255,255,255,0.06)">
+        <div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;
+                    color:#e05050;margin-bottom:3px">Who's on this side</div>
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <div style="font-size:13px;font-weight:600;color:#f0ede8">{_e(b_label)}</div>
+          <div style="font-size:12px;color:#5a5752;display:flex;align-items:center;gap:6px">
+            <span>{_e(b_preview)}</span>
+            <span id="chain-b-arrow" style="transition:transform 0.2s">▾</span>
+          </div>
+        </div>
+      </button>
+      <div id="chain-b" style="display:none;padding:4px 18px 12px">
+        {b_chain_html}
+      </div>
     </div>
-    <div style="padding:4px 18px 12px">{_chain_rows(b_chain)}</div>
   </div>
 </div>
 
-{"<div style='margin-bottom:40px'><div style='font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:10px'>What both sides acknowledge</div><div style='border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;background:#111;padding:4px 18px'>" + both_html + "</div></div>" if both_html else ""}
+<!-- WHAT EVERYONE AGREES ON -->
+{"<div style='margin-bottom:40px'><div style='font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:10px'>What everyone agrees on</div><div style='border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;background:#111;padding:4px 18px'>" + both_html + "</div></div>" if both_html else ""}
+
+<!-- CONTESTED CLAIM (de-emphasized, after the main fight) -->
+<div style="margin-bottom:40px">
+  <div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;
+              color:#5a5752;margin-bottom:10px">The specific claim in dispute</div>
+  <div style="padding:12px 18px;border-left:2px solid rgba(255,255,255,0.1);
+              font-size:13px;color:#5a5752;line-height:1.7;font-style:italic">
+    {_e(contested_claim)}
+  </div>
+</div>
 """
 
     return f"""<!DOCTYPE html>
@@ -342,6 +400,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   }}
   a{{color:#00c8b4;text-decoration:none}}
   a:hover{{opacity:.8}}
+  button:hover{{opacity:.85}}
 </style>
 </head>
 <body>
@@ -356,18 +415,20 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   </a>
   <div style="display:flex;align-items:center;gap:14px">
     {signed_badge}
-    <a href="#verification" style="font-size:11px;color:#5a5752;letter-spacing:0.04em">Receipt ↓</a>
+    <a href="#verification" style="font-size:11px;color:#5a5752;letter-spacing:0.04em">
+      Receipt ↓
+    </a>
   </div>
 </header>
 
 <div style="max-width:880px;margin:0 auto;padding:0 36px">
 
 <!-- HOOK -->
-<div style="padding:52px 0 36px">
+<div style="padding:52px 0 32px">
   {f'<div style="margin-bottom:10px"><a href="{_e(a_url)}" target="_blank" rel="noopener" style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#5a5752">{_e(a_pub)} ↗</a></div>' if a_url else ""}
-  <h1 style="font-family:Syne,sans-serif;font-size:clamp(22px,3.8vw,38px);font-weight:800;
-              line-height:1.1;letter-spacing:-0.02em;color:#f0ede8;
-              margin-bottom:14px;max-width:700px">
+  <h1 style="font-family:Syne,sans-serif;font-size:clamp(22px,3.8vw,38px);
+              font-weight:800;line-height:1.1;letter-spacing:-0.02em;color:#f0ede8;
+              margin-bottom:0;max-width:700px">
     {_e(a_title or "Untitled Investigation")}
   </h1>
 </div>
@@ -376,11 +437,11 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 {coalition_section}
 
-<!-- NARRATIVE (after the fight) -->
-{f'<div style="margin-bottom:40px;padding:18px 22px;border:0.5px solid rgba(255,255,255,0.07);border-radius:10px;background:#111"><div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:8px">Summary</div><p style="font-size:14px;color:#9e9a93;line-height:1.7">{_e(narrative[:300])}{"…" if len(narrative)>300 else ""}</p></div>' if narrative and coalition else f'<p style="font-size:15px;color:#9e9a93;line-height:1.7;margin-bottom:32px">{_e(narrative[:300])}</p>' if narrative else ""}
+<!-- SUMMARY (after the fight) -->
+{f'<div style="margin-bottom:40px;padding:16px 20px;border:0.5px solid rgba(255,255,255,0.07);border-radius:10px;background:#111"><div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:8px">Summary</div><p style="font-size:14px;color:#9e9a93;line-height:1.7">{_e(narrative[:300])}{"…" if len(narrative)>300 else ""}</p></div>' if narrative else ""}
 
-<!-- WHAT NOBODY IS COVERING -->
-{f'<div style="margin-bottom:40px"><div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:12px">What nobody is covering</div>{nobody_html}</div>' if nobody_html else ""}
+<!-- WHAT NO ONE IS REALLY TALKING ABOUT -->
+{f'<div style="margin-bottom:40px"><div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:12px">What no one is really talking about</div>{nobody_html}</div>' if nobody_html else ""}
 
 <!-- CROSS-CORROBORATED -->
 {f'<div style="margin-bottom:40px"><div style="font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:#5a5752;margin-bottom:12px">Cross-corroborated</div><div style="border:0.5px solid rgba(255,255,255,0.08);border-radius:10px;background:#111;padding:4px 18px">{confirmed_html}</div></div>' if confirmed_html else ""}
@@ -412,10 +473,14 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
                 display:flex;gap:8px;flex-wrap:wrap">
       <a href="/verify?id={_e(rid)}"
          style="font-size:11px;padding:7px 16px;border-radius:6px;
-                border:0.5px solid rgba(255,255,255,0.12);color:#9e9a93">Verify ↗</a>
+                border:0.5px solid rgba(255,255,255,0.12);color:#9e9a93">
+        Verify independently ↗
+      </a>
       <a href="/r/{_e(rid)}" target="_blank"
          style="font-size:11px;padding:7px 16px;border-radius:6px;
-                border:0.5px solid rgba(255,255,255,0.12);color:#9e9a93">Raw JSON ↗</a>
+                border:0.5px solid rgba(255,255,255,0.12);color:#9e9a93">
+        Raw JSON ↗
+      </a>
     </div>
   </div>
 </div>
@@ -430,5 +495,21 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 </div>
 
 </div>
+
+<script>
+function toggleWhyNumber() {{
+  var el = document.getElementById('why-number');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}}
+
+function toggleChain(id) {{
+  var el = document.getElementById(id);
+  var arrow = document.getElementById(id + '-arrow');
+  var open = el.style.display !== 'none';
+  el.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.style.transform = open ? '' : 'rotate(180deg)';
+}}
+</script>
+
 </body>
 </html>"""
