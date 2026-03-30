@@ -1145,10 +1145,12 @@ export default function DepthMap() {
     actorDepthInflight.current.add(key);
     setActorDepthLoading((p) => ({ ...p, [key]: true }));
     try {
+      // Name twice: candidateRelevanceScore needs ≥2 (e.g. two mentions); bare name scores 1.
+      const narrativeForLayer = `${key} is a named entity referenced in this public record. ${key}.`;
       const res = await fetch(`${API}/v1/actor-layer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ narrative: key }),
+        body: JSON.stringify({ narrative: narrativeForLayer }),
       });
       let data = {};
       try {

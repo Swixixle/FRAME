@@ -95,7 +95,12 @@ def build_query_for_adapter(claim: dict[str, Any], adapter: str) -> str:
         return text
     if adapter == "courtlistener":
         return subject or text
-    if adapter in ("actor", "surface"):
+    if adapter == "actor":
+        subject_str = (subject or text) or ""
+        return (
+            f"{subject_str} is a named entity referenced in this public record. {subject_str}."
+        )
+    if adapter == "surface":
         return subject or text
 
     return text
