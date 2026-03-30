@@ -95,7 +95,7 @@ from actor_ledger_api import (
 from pattern_api import get_pattern_lib_payload, run_pattern_match
 from public_narrative_api import run_global_perspectives
 from query_engine import run_query
-from query_synthesizer import synthesize_articles
+from query_synthesizer import synthesize_articles, synthesize_timeline
 from spread_api import run_spread
 from origin_api import run_origin
 from actor_layer_api import run_actor_layer
@@ -1094,7 +1094,7 @@ async def public_narrative_post(body: PublicNarrativePostBody) -> dict[str, Any]
 @app.post("/v1/query")
 async def query_endpoint(body: QueryBody) -> dict[str, Any]:
     """
-    Natural language query → multi-source RSS match → article fetch → synthesis + global perspectives.
+    Natural language query → classify → RSS or GDELT fetch → synthesis / timeline + global perspectives.
     """
     q = body.query.strip()
     if not q:
@@ -1107,13 +1107,25 @@ async def query_endpoint(body: QueryBody) -> dict[str, Any]:
     try:
         query_result = await asyncio.to_thread(run_query, q, body.max_sources)
         articles = query_result.get("articles") or []
+        query_type = query_result.get("query_type", "current")
+        timeline = query_result.get("timeline")
+        classification = query_result.get("classification") or {}
+        date_range = classification.get("date_range")
 
         synthesis: dict[str, Any] = {}
+        timeline_synthesis: dict[str, Any] = {}
+
         if articles:
-            synthesis = await asyncio.to_thread(synthesize_articles, q, articles)
+            if query_type == "entity_timeline":
+                date_label = (date_range or {}).get("label", "") if date_range else ""
+                timeline_synthesis = await asyncio.to_thread(
+                    synthesize_timeline, q, articles, date_label
+                )
+            else:
+                synthesis = await asyncio.to_thread(synthesize_articles, q, articles)
 
         global_perspectives: dict[str, Any] = {}
-        if body.include_global_perspectives and q:
+        if body.include_global_perspectives:
             global_perspectives = await asyncio.to_thread(run_global_perspectives, q)
 
         now = datetime.now(timezone.utc).isoformat()
@@ -1121,6 +1133,8 @@ async def query_endpoint(body: QueryBody) -> dict[str, Any]:
             "receipt_id": str(uuid.uuid4()),
             "receipt_type": "query_synthesis",
             "query": q,
+            "query_type": query_type,
+            "classification": classification,
             "keywords": query_result.get("keywords", []),
             "generated_at": now,
             "sources_searched": query_result.get("sources_searched", 0),
@@ -1129,16 +1143,20 @@ async def query_endpoint(body: QueryBody) -> dict[str, Any]:
             "articles": [
                 {
                     "url": a["url"],
-                    "title": a["title"],
-                    "outlet": a["outlet"],
-                    "ecosystem": a["ecosystem"],
+                    "title": a.get("title"),
+                    "outlet": a.get("outlet"),
+                    "ecosystem": a.get("ecosystem"),
                     "published": a.get("published"),
+                    "source_country": a.get("source_country"),
                     "relevance_score": a.get("relevance_score"),
                     "fetch_success": a.get("fetch_success"),
+                    "source": a.get("source", "rss"),
                 }
                 for a in articles
             ],
+            "timeline_groups": timeline,
             "synthesis": synthesis,
+            "timeline_synthesis": timeline_synthesis,
             "global_perspectives": global_perspectives,
             "error": query_result.get("error"),
         }

@@ -312,93 +312,235 @@ function TierBadge({ tier }) {
   );
 }
 
-function QuerySynthesisPanel({ result }) {
-  if (!result) return null;
-  const synthesis = result.synthesis || {};
-  const articles = result.articles || [];
-  const gp = result.global_perspectives || {};
+function TimelineSynthesisPanel({ synthesis, timelineGroups, dateRangeLabel }) {
+  const hasSynth = synthesis && typeof synthesis === "object";
+  const hasGroups = Array.isArray(timelineGroups) && timelineGroups.length > 0;
+  if (!hasSynth && !hasGroups) return null;
 
   return (
-    <div className="depth-query-synthesis">
-      <h2 className="depth-inline-title">Query synthesis</h2>
-      <p className="depth-muted" style={{ fontSize: "12px", marginBottom: "12px" }}>
-        <code>{result.receipt_id}</code> · {result.generated_at} ·{" "}
-        {result.signed ? "signed" : "unsigned"} · {result.sources_searched} sources searched ·{" "}
-        {result.articles_found} articles found
-      </p>
-
-      {result.error ? <p className="depth-banner-error">{result.error}</p> : null}
-      {synthesis.error ? <p className="depth-banner-error">{synthesis.error}</p> : null}
-
-      {synthesis.what_is_happening ? (
+    <div className="depth-timeline-synthesis">
+      {hasSynth && synthesis.arc ? (
         <div className="depth-query-what">
-          <p>{synthesis.what_is_happening}</p>
+          <div
+            style={{
+              fontSize: "11px",
+              color: "var(--muted,#888)",
+              marginBottom: "6px",
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+            }}
+          >
+            {dateRangeLabel || synthesis.period || "Period"} — arc
+          </div>
+          <p>{synthesis.arc}</p>
           {synthesis.confidence_tier ? <TierBadge tier={synthesis.confidence_tier} /> : null}
         </div>
       ) : null}
 
-      {(synthesis.key_facts || []).length > 0 ? (
-        <div className="depth-query-section">
-          <strong className="depth-query-section-title">Confirmed across sources</strong>
-          <ul className="depth-query-list">
-            {synthesis.key_facts.map((f, i) => (
-              <li key={i}>
-                <span>{f.fact}</span>
-                <span className="depth-query-supported">{(f.supported_by || []).join(", ")}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      {hasSynth && synthesis.error ? (
+        <p className="depth-banner-error">{synthesis.error}</p>
       ) : null}
 
-      {(synthesis.contested_facts || []).length > 0 ? (
+      {hasSynth && (synthesis.key_moments || []).length > 0 ? (
         <div className="depth-query-section">
-          <strong className="depth-query-section-title">Contested between sources</strong>
-          {synthesis.contested_facts.map((c, i) => (
-            <div key={i} className="depth-query-contested">
-              <div className="depth-query-contested-fact">{c.fact}</div>
-              <div className="depth-query-contested-sides">
-                <div>
-                  <span className="depth-query-outlet-list">{(c.outlets_a || []).join(", ")}</span>
-                  <span>: {c.version_a}</span>
-                </div>
-                <div>
-                  <span className="depth-query-outlet-list">{(c.outlets_b || []).join(", ")}</span>
-                  <span>: {c.version_b}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {(synthesis.what_nobody_is_saying || []).length > 0 ? (
-        <div className="depth-query-section">
-          <strong className="depth-query-section-title">What nobody is covering</strong>
-          <ul className="depth-query-list depth-query-list-absent">
-            {synthesis.what_nobody_is_saying.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      {(synthesis.timeline || []).length > 0 ? (
-        <div className="depth-query-section">
-          <strong className="depth-query-section-title">Timeline</strong>
+          <strong className="depth-query-section-title">Key moments</strong>
           <ul className="depth-query-timeline">
-            {synthesis.timeline.map((t, i) => (
+            {synthesis.key_moments.map((m, i) => (
               <li key={i}>
-                <span className="depth-query-timeline-when">{t.when}</span>
-                <span className="depth-query-timeline-event">{t.event}</span>
-                {t.source ? (
-                  <span className="depth-query-timeline-source">{t.source}</span>
+                <span className="depth-query-timeline-when">{m.when}</span>
+                <span className="depth-query-timeline-event">{m.what}</span>
+                {(m.outlets || []).length > 0 ? (
+                  <span className="depth-query-timeline-source">{m.outlets.join(", ")}</span>
                 ) : null}
               </li>
             ))}
           </ul>
         </div>
       ) : null}
+
+      {hasSynth && (synthesis.consistent_elements || []).length > 0 ? (
+        <div className="depth-query-section">
+          <strong className="depth-query-section-title">What stayed consistent</strong>
+          <ul className="depth-query-list">
+            {synthesis.consistent_elements.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {hasSynth && (synthesis.what_changed || []).length > 0 ? (
+        <div className="depth-query-section">
+          <strong className="depth-query-section-title">What changed</strong>
+          <ul className="depth-query-list">
+            {synthesis.what_changed.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {hasSynth && synthesis.ecosystem_divergence ? (
+        <div className="depth-query-section">
+          <strong className="depth-query-section-title">How ecosystems diverged</strong>
+          <p
+            style={{
+              fontSize: "13px",
+              color: "var(--fg-secondary,#ccc)",
+              lineHeight: 1.7,
+            }}
+          >
+            {synthesis.ecosystem_divergence}
+          </p>
+        </div>
+      ) : null}
+
+      {hasGroups ? (
+        <div className="depth-query-section">
+          <strong className="depth-query-section-title">Coverage by week</strong>
+          {timelineGroups.map((g, i) => (
+            <div key={i} className="depth-timeline-week">
+              <div className="depth-timeline-week-label">
+                {g.week}
+                <span className="depth-timeline-week-count">
+                  {g.count} article{g.count !== 1 ? "s" : ""}
+                </span>
+              </div>
+              <ul className="depth-timeline-week-articles">
+                {(g.articles || []).slice(0, 3).map((a, j) => (
+                  <li key={j}>
+                    <a
+                      href={a.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="depth-query-source-link"
+                    >
+                      {a.title || a.url}
+                    </a>
+                    <span className="depth-query-source-outlet">{a.outlet}</span>
+                  </li>
+                ))}
+                {g.count > 3 ? (
+                  <li className="depth-timeline-more">+{g.count - 3} more</li>
+                ) : null}
+              </ul>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function QuerySynthesisPanel({ result }) {
+  if (!result) return null;
+  const isTimeline = result.query_type === "entity_timeline";
+  const synthesis = result.synthesis || {};
+  const timelineSynthesis = result.timeline_synthesis || {};
+  const timelineGroups = result.timeline_groups || [];
+  const articles = result.articles || [];
+  const gp = result.global_perspectives || {};
+  const classification = result.classification || {};
+  const dateRangeLabel = classification.date_range?.label || "";
+
+  return (
+    <div className="depth-query-synthesis">
+      <h2 className="depth-inline-title">
+        {isTimeline ? "Coverage timeline" : "Query synthesis"}
+      </h2>
+      <p className="depth-muted" style={{ fontSize: "12px", marginBottom: "12px" }}>
+        <code>{result.receipt_id}</code> · {result.generated_at} ·{" "}
+        {result.signed ? "signed" : "unsigned"} ·{" "}
+        {typeof result.sources_searched === "number"
+          ? `${result.sources_searched} sources searched`
+          : result.sources_searched}{" "}
+        · {result.articles_found} articles found
+        {dateRangeLabel ? ` · ${dateRangeLabel}` : ""}
+      </p>
+
+      {result.error ? <p className="depth-banner-error">{result.error}</p> : null}
+
+      {isTimeline ? (
+        <TimelineSynthesisPanel
+          synthesis={timelineSynthesis}
+          timelineGroups={timelineGroups}
+          dateRangeLabel={dateRangeLabel}
+        />
+      ) : (
+        <>
+          {synthesis.error ? <p className="depth-banner-error">{synthesis.error}</p> : null}
+
+          {synthesis.what_is_happening ? (
+            <div className="depth-query-what">
+              <p>{synthesis.what_is_happening}</p>
+              {synthesis.confidence_tier ? <TierBadge tier={synthesis.confidence_tier} /> : null}
+            </div>
+          ) : null}
+
+          {(synthesis.key_facts || []).length > 0 ? (
+            <div className="depth-query-section">
+              <strong className="depth-query-section-title">Confirmed across sources</strong>
+              <ul className="depth-query-list">
+                {synthesis.key_facts.map((f, i) => (
+                  <li key={i}>
+                    <span>{f.fact}</span>
+                    <span className="depth-query-supported">{(f.supported_by || []).join(", ")}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {(synthesis.contested_facts || []).length > 0 ? (
+            <div className="depth-query-section">
+              <strong className="depth-query-section-title">Contested between sources</strong>
+              {synthesis.contested_facts.map((c, i) => (
+                <div key={i} className="depth-query-contested">
+                  <div className="depth-query-contested-fact">{c.fact}</div>
+                  <div className="depth-query-contested-sides">
+                    <div>
+                      <span className="depth-query-outlet-list">{(c.outlets_a || []).join(", ")}</span>
+                      <span>: {c.version_a}</span>
+                    </div>
+                    <div>
+                      <span className="depth-query-outlet-list">{(c.outlets_b || []).join(", ")}</span>
+                      <span>: {c.version_b}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {(synthesis.what_nobody_is_saying || []).length > 0 ? (
+            <div className="depth-query-section">
+              <strong className="depth-query-section-title">What nobody is covering</strong>
+              <ul className="depth-query-list depth-query-list-absent">
+                {synthesis.what_nobody_is_saying.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {(synthesis.timeline || []).length > 0 ? (
+            <div className="depth-query-section">
+              <strong className="depth-query-section-title">Timeline</strong>
+              <ul className="depth-query-timeline">
+                {synthesis.timeline.map((t, i) => (
+                  <li key={i}>
+                    <span className="depth-query-timeline-when">{t.when}</span>
+                    <span className="depth-query-timeline-event">{t.event}</span>
+                    {t.source ? (
+                      <span className="depth-query-timeline-source">{t.source}</span>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </>
+      )}
 
       {articles.length > 0 ? (
         <div className="depth-query-section">
@@ -415,6 +557,9 @@ function QuerySynthesisPanel({ result }) {
                   {a.title || a.url}
                 </a>
                 <span className="depth-query-source-outlet">{a.outlet}</span>
+                {a.source === "gdelt" ? (
+                  <span className="depth-query-gdelt-badge">GDELT</span>
+                ) : null}
                 {!a.fetch_success ? (
                   <span className="depth-query-fetch-fail">(summary only)</span>
                 ) : null}

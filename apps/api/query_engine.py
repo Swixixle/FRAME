@@ -1,7 +1,7 @@
 """
 Natural language query engine.
-Given a query, searches RSS feeds across global media ecosystems,
-fetches matching articles, and returns structured results for synthesis.
+Classifies the query, routes to RSS (current) or GDELT (historical / timeline),
+fetches articles, and returns structured results for synthesis.
 """
 
 from __future__ import annotations
@@ -15,6 +15,8 @@ import feedparser
 import httpx
 
 from article_ingest import fetch_article
+from gdelt_adapter import deduplicate_by_ecosystem, search_gdelt, search_gdelt_timeline
+from query_classifier import classify_query
 from rss_sources import RSS_FEEDS
 
 QUERY_STOP_WORDS = {
@@ -178,57 +180,140 @@ def fetch_articles_parallel(urls: list[str], timeout: int = 15) -> list[dict[str
     return results
 
 
+def _public_classification(classification: dict[str, Any]) -> dict[str, Any]:
+    dr = classification.get("date_range")
+    return {
+        "source": classification["source"],
+        "search_terms": classification["search_terms"],
+        "entity": classification.get("entity"),
+        "date_range": (
+            {"label": dr["label"], "type": dr["type"]} if dr else None
+        ),
+        "gdelt_timespan": classification.get("gdelt_timespan"),
+    }
+
+
+def _attach_fetched_bodies(articles: list[dict[str, Any]], max_fetch: int = 6) -> None:
+    if not articles:
+        return
+    urls = [a["url"] for a in articles[:max_fetch] if a.get("url")]
+    fetched = fetch_articles_parallel(urls)
+    url_to_fetch = {f["url"]: f for f in fetched}
+    for a in articles:
+        fd = url_to_fetch.get(a.get("url", ""), {})
+        a["text"] = fd.get("text", a.get("text", ""))
+        a["word_count"] = fd.get("word_count", a.get("word_count", 0))
+        a["fetch_success"] = bool(fd.get("text"))
+        if fd.get("title") and not a.get("title"):
+            a["title"] = fd["title"]
+        a["publication"] = a.get("outlet", a.get("publication", ""))
+
+
 def run_query(query: str, max_sources: int = 8) -> dict[str, Any]:
     q = (query or "").strip()
-    keywords = extract_keywords(q)
-    if not keywords:
-        return {
-            "query": q,
-            "keywords": [],
-            "articles": [],
-            "error": "Could not extract search keywords from query",
-        }
+    classification = classify_query(q)
+    source = classification["source"]
+    search_terms = list(classification["search_terms"])
+    if not search_terms:
+        search_terms = extract_keywords(q)[:8]
+    if not search_terms:
+        search_terms = [w for w in re.findall(r"[a-zA-Z']+", q.lower()) if len(w) > 2][:5]
+    entity = classification["entity"]
+    date_range = classification["date_range"]
+    query_type = classification["type"]
 
-    feed_results = search_feeds(keywords, max_results=max_sources)
+    if entity:
+        gdelt_query = f'"{entity}"'
+        if search_terms:
+            extra = [t for t in search_terms if t.lower() not in entity.lower().split()]
+            if extra:
+                gdelt_query += " " + " ".join(extra[:3])
+    else:
+        gdelt_query = " ".join(search_terms[:5]) if search_terms else q[:200]
 
-    if not feed_results:
-        return {
-            "query": q,
-            "keywords": keywords,
-            "articles": [],
-            "sources_searched": len(RSS_FEEDS),
-            "error": "No matching articles found across sources. "
-            "Try a more specific query or paste a URL directly.",
-        }
-
-    urls = [r["url"] for r in feed_results if r.get("url")]
-    fetched = fetch_articles_parallel(urls[:6])
-
-    url_to_fetch = {f["url"]: f for f in fetched}
     articles: list[dict[str, Any]] = []
-    for feed_result in feed_results:
-        url = feed_result.get("url", "")
-        fetched_data = url_to_fetch.get(url, {})
-        articles.append(
-            {
-                "url": url,
-                "title": fetched_data.get("title") or feed_result.get("title"),
-                "outlet": feed_result["outlet"],
-                "ecosystem": feed_result["ecosystem"],
-                "publication": feed_result["outlet"],
-                "text": fetched_data.get("text", ""),
-                "word_count": fetched_data.get("word_count", 0),
-                "summary": feed_result.get("summary", ""),
-                "published": feed_result.get("published", ""),
-                "relevance_score": feed_result["score"],
-                "fetch_success": bool(fetched_data.get("text")),
-            }
+    timeline_data: list[dict[str, Any]] | None = None
+    error: str | None = None
+
+    if source == "gdelt_timeline" and date_range:
+        tl = search_gdelt_timeline(
+            query=gdelt_query or q,
+            start_dt=date_range["start"],
+            end_dt=date_range["end"],
+            max_records=50,
         )
+        articles = deduplicate_by_ecosystem(tl["articles"], max_per_ecosystem=3, total_max=12)
+        timeline_data = tl["timeline_groups"]
+        _attach_fetched_bodies(articles, max_fetch=6)
+
+    elif source == "gdelt" and date_range:
+        raw = search_gdelt(
+            query=gdelt_query or q,
+            start_dt=date_range["start"],
+            end_dt=date_range["end"],
+            max_records=25,
+        )
+        articles = deduplicate_by_ecosystem(raw, max_per_ecosystem=2, total_max=max_sources)
+        _attach_fetched_bodies(articles, max_fetch=6)
+
+    else:
+        keywords = search_terms if search_terms else extract_keywords(q)
+        if not keywords:
+            keywords = [gdelt_query] if gdelt_query else [q[:80]]
+        feed_results = search_feeds(keywords, max_results=max_sources)
+
+        if not feed_results:
+            raw = search_gdelt(
+                query=gdelt_query or " ".join(keywords[:3]) or q[:200],
+                timespan=classification.get("gdelt_timespan") or "7d",
+                max_records=20,
+            )
+            feed_results = deduplicate_by_ecosystem(
+                raw, max_per_ecosystem=2, total_max=max_sources
+            )
+
+        if not feed_results:
+            error = (
+                "No matching articles found. "
+                "Try a more specific query or paste a URL directly."
+            )
+        else:
+            urls = [r["url"] for r in feed_results if r.get("url")]
+            fetched = fetch_articles_parallel(urls[:6])
+            url_to_fetch = {f["url"]: f for f in fetched}
+            for r in feed_results:
+                url = r.get("url", "")
+                fetched_data = url_to_fetch.get(url, {})
+                articles.append(
+                    {
+                        "url": url,
+                        "title": fetched_data.get("title") or r.get("title"),
+                        "outlet": r.get("outlet", r.get("domain", "")),
+                        "ecosystem": r.get("ecosystem", "unknown"),
+                        "publication": r.get("outlet", ""),
+                        "text": fetched_data.get("text", ""),
+                        "word_count": fetched_data.get("word_count", 0),
+                        "summary": r.get("summary", ""),
+                        "published": r.get("published", ""),
+                        "relevance_score": r.get("relevance_score", r.get("score", 0)),
+                        "fetch_success": bool(fetched_data.get("text")),
+                        "source": r.get("source", "rss"),
+                        "source_country": r.get("source_country"),
+                    }
+                )
+
+    sources_searched: int | str = (
+        len(RSS_FEEDS) if classification["source"] == "rss" else "GDELT"
+    )
 
     return {
         "query": q,
-        "keywords": keywords,
-        "sources_searched": len(RSS_FEEDS),
+        "query_type": query_type,
+        "classification": _public_classification(classification),
+        "keywords": search_terms,
+        "sources_searched": sources_searched,
         "articles": articles,
-        "ecosystems_covered": list({a["ecosystem"] for a in articles}),
+        "timeline": timeline_data,
+        "ecosystems_covered": list({a.get("ecosystem", "unknown") for a in articles}),
+        "error": error,
     }

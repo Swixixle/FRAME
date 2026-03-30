@@ -127,3 +127,117 @@ def synthesize_articles(query: str, articles: list[dict[str, Any]]) -> dict[str,
             "named_entities": [],
             "error": str(e),
         }
+
+
+TIMELINE_SYNTHESIS_PROMPT = """You are a global news synthesis engine analyzing how coverage of a topic evolved over time.
+
+You have articles from multiple dates and outlets about the same entity or topic.
+
+Analyze how the story changed over time — what shifted, what stayed consistent, what new angles emerged.
+
+Return ONLY valid JSON. No preamble. No markdown fences.
+
+Format:
+{
+  "subject": "who or what this is about",
+  "period": "the time period covered",
+  "arc": "2-3 sentence description of how this story evolved over the period",
+  "key_moments": [
+    {"when": "date or week", "what": "what happened or changed in coverage", "outlets": ["outlet1"]}
+  ],
+  "consistent_elements": ["what stayed the same across the period"],
+  "what_changed": ["what shifted in how this was covered"],
+  "ecosystem_divergence": "how different media ecosystems covered this differently over time",
+  "confidence_tier": "cross_corroborated|official_secondary|structural_heuristic"
+}"""
+
+
+def synthesize_timeline(
+    query: str,
+    articles: list[dict[str, Any]],
+    date_range_label: str,
+) -> dict[str, Any]:
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return {
+            "subject": query,
+            "period": date_range_label,
+            "arc": "Timeline synthesis unavailable (ANTHROPIC_API_KEY not set).",
+            "key_moments": [],
+            "consistent_elements": [],
+            "what_changed": [],
+            "ecosystem_divergence": "",
+            "confidence_tier": "structural_heuristic",
+            "error": "ANTHROPIC_API_KEY not set",
+        }
+
+    client = anthropic.Anthropic(api_key=key)
+
+    article_summaries: list[str] = []
+    for i, a in enumerate(articles[:12]):
+        text = a.get("text") or a.get("summary") or ""
+        if not text:
+            continue
+        pub = (a.get("published") or "")[:32]
+        article_summaries.append(
+            f"--- {a.get('outlet')} | {pub} ({a.get('ecosystem')}) ---\n"
+            f"Title: {a.get('title', '')}\n"
+            f"Text: {text[:800]}\n"
+        )
+
+    if not article_summaries:
+        return {
+            "subject": query,
+            "period": date_range_label,
+            "arc": "Insufficient article content for timeline synthesis.",
+            "key_moments": [],
+            "consistent_elements": [],
+            "what_changed": [],
+            "ecosystem_divergence": "",
+            "confidence_tier": "structural_heuristic",
+            "error": "No fetchable content",
+        }
+
+    combined = "\n\n".join(article_summaries)
+    user_content = f"Query: {query}\nPeriod: {date_range_label}\n\nArticles:\n\n{combined}"
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": TIMELINE_SYNTHESIS_PROMPT + "\n\n" + user_content,
+                },
+            ],
+        )
+        raw = message.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        return {
+            "subject": query,
+            "period": date_range_label,
+            "arc": "Timeline synthesis parse error.",
+            "key_moments": [],
+            "consistent_elements": [],
+            "what_changed": [],
+            "ecosystem_divergence": "",
+            "confidence_tier": "structural_heuristic",
+            "error": f"Parse error: {e}",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "subject": query,
+            "period": date_range_label,
+            "arc": "Timeline synthesis failed.",
+            "key_moments": [],
+            "consistent_elements": [],
+            "what_changed": [],
+            "ecosystem_divergence": "",
+            "confidence_tier": "structural_heuristic",
+            "error": str(e),
+        }
