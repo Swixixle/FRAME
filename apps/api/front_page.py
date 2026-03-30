@@ -705,6 +705,11 @@ body.fp-reporter-mode .reader-focus {{ display: none !important; }}
     </div>
     <div class="fp-mast-right">
       <div class="fp-date">{edition}</div>
+      <form action="/search" method="get" class="fp-header-search" style="margin-top:8px;display:flex;gap:6px;justify-content:flex-end;align-items:center">
+        <input type="search" name="q" placeholder="Search conflicts…" autocomplete="off" aria-label="Search conflicts"
+          style="width:min(200px,38vw);padding:6px 10px;font-size:12px;border:1px solid var(--rule);font-family:inherit;background:var(--card)" />
+        <button type="submit" style="padding:6px 12px;font-size:10px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;border:1px solid var(--ink);background:var(--ink);color:var(--paper);cursor:pointer">Go</button>
+      </form>
       <div class="fp-mode">
         <button type="button" id="fp-mode-reader" class="active">Reader</button>
         <button type="button" id="fp-mode-reporter">Reporter</button>

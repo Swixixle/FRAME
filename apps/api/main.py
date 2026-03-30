@@ -110,6 +110,7 @@ from receipt_store import (
     ensure_media_axis_table,
     ensure_outlet_dossiers_table,
     ensure_reporter_dossiers_table,
+    ensure_search_fts_indexes,
     ensure_table,
     get_coalition_map,
     get_receipt as load_stored_receipt,
@@ -527,12 +528,16 @@ from coalition_api import router as coalition_http_router  # noqa: E402
 from media_axis_api import router as media_axis_http_router  # noqa: E402
 from front_page import build_front_page_payload, render_front_page  # noqa: E402
 from front_page_api import router as front_page_http_router  # noqa: E402
+from search_api import router as search_http_router  # noqa: E402
+from search_page import render_search_page  # noqa: E402
+from search_service import compute_facets, run_search  # noqa: E402
 
 app.include_router(frames_http_router)
 app.include_router(dossier_http_router)
 app.include_router(coalition_http_router, prefix="/v1")
 app.include_router(media_axis_http_router, prefix="/v1")
 app.include_router(front_page_http_router, prefix="/v1")
+app.include_router(search_http_router, prefix="/v1")
 
 _web_dir = _repo_root() / "apps" / "web"
 if _web_dir.is_dir():
@@ -594,6 +599,12 @@ async def capture_schema_baselines() -> None:
         import logging
 
         logging.warning("Coalition maps table creation failed: %s", exc)
+    try:
+        ensure_search_fts_indexes()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.warning("Search FTS indexes creation failed: %s", exc)
     for label, fn in (
         ("media_axis", ensure_media_axis_table),
         ("outlet_dossiers", ensure_outlet_dossiers_table),
@@ -841,6 +852,70 @@ async def verify_page() -> FileResponse:
                 media_type="text/html",
             )
     raise HTTPException(status_code=404, detail="verify.html not found")
+
+
+@app.get("/search", response_class=HTMLResponse)
+async def search_html_page(
+    q: str = Query(""),
+    volatility_min: int | None = Query(None, ge=0, le=100),
+    volatility_max: int | None = Query(None, ge=0, le=100),
+    date_range: str = Query("30d"),
+    outlet_type: str | None = Query(None),
+    region: str | None = Query(None),
+    sort: str = Query("volatility"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Conflict search (server-rendered). Results are bundles, not article lists."""
+    empty_payload: dict[str, Any] = {
+        "query": "",
+        "total": 0,
+        "results": [],
+        "facets": compute_facets([], None),
+    }
+    if not (q or "").strip():
+        return HTMLResponse(
+            render_search_page(
+                "",
+                empty_payload,
+                date_range=date_range,
+                sort=sort,
+                volatility_min="",
+                volatility_max="",
+            )
+        )
+    try:
+        data = await asyncio.to_thread(
+            run_search,
+            q,
+            volatility_min=volatility_min,
+            volatility_max=volatility_max,
+            date_range=date_range,
+            outlet_type=outlet_type,
+            region=region,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception:
+        data = {
+            "query": q,
+            "total": 0,
+            "results": [],
+            "facets": compute_facets([], None),
+        }
+    vm = "" if volatility_min is None else str(volatility_min)
+    vx = "" if volatility_max is None else str(volatility_max)
+    return HTMLResponse(
+        render_search_page(
+            q,
+            data,
+            date_range=date_range,
+            sort=sort,
+            volatility_min=vm,
+            volatility_max=vx,
+        )
+    )
 
 
 @app.get("/")

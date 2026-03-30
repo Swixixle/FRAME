@@ -566,6 +566,11 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     PUBLIC EYE
   </a>
   <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <form action="/search" method="get" style="display:inline-flex;gap:6px;align-items:center;margin-right:4px">
+      <input type="search" name="q" placeholder="Conflicts…" autocomplete="off" aria-label="Search conflicts"
+        style="width:min(140px,32vw);padding:5px 8px;font-size:11px;border:1px solid rgba(26,26,26,0.2);font-family:inherit" />
+      <button type="submit" style="padding:5px 10px;font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;border:1px solid #1a1a1a;background:#1a1a1a;color:#F7F4EF;cursor:pointer">Go</button>
+    </form>
     <span class="inv-reader-soft">{signed_badge}</span>
     <div class="inv-mode">
       <button type="button" id="inv-mode-reader" class="active">Reader</button>

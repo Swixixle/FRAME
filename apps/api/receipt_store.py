@@ -93,6 +93,45 @@ def ensure_coalition_maps_table() -> None:
         conn.close()
 
 
+def ensure_search_fts_indexes() -> None:
+    """GIN full-text indexes on receipt + coalition payloads (see db/migrations/008)."""
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_frame_receipts_fts ON frame_receipts
+                USING GIN (
+                  to_tsvector(
+                    'english',
+                    coalesce(payload->>'article_topic', '') || ' ' ||
+                    coalesce(payload->'article'->>'title', '') || ' ' ||
+                    coalesce(payload->>'narrative', '') || ' ' ||
+                    coalesce(payload->>'query', '') || ' ' ||
+                    coalesce(payload->'named_entities'::text, '')
+                  )
+                )
+                """
+            )
+            cur.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_coalition_maps_fts ON coalition_maps
+                USING GIN (
+                  to_tsvector(
+                    'english',
+                    coalesce(payload->>'contested_claim', '') || ' ' ||
+                    coalesce(payload->'position_a'->>'label', '') || ' ' ||
+                    coalesce(payload->'position_b'->>'label', '') || ' ' ||
+                    coalesce(payload->>'irreconcilable_gap', '')
+                  )
+                )
+                """
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_coalition_map(receipt_id: str) -> dict[str, Any] | None:
     """Return stored coalition map API payload, or None."""
     conn = _get_conn()
