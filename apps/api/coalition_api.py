@@ -22,11 +22,11 @@ _inflight: set[str] = set()
 _lock = threading.Lock()
 
 
-@router.post("/coalition-map")
+@router.post("/coalition-map", response_model=None)
 async def post_coalition_map(
     body: CoalitionMapPostBody,
     background_tasks: BackgroundTasks,
-) -> dict | JSONResponse:
+) -> None:
     rid = body.receipt_id.strip()
     if not rid:
         raise HTTPException(status_code=400, detail="receipt_id is required")
@@ -72,8 +72,8 @@ async def post_coalition_map(
     )
 
 
-@router.get("/coalition-map/{receipt_id}")
-async def get_coalition_map_by_receipt(receipt_id: str) -> dict:
+@router.get("/coalition-map/{receipt_id}", response_model=None)
+async def get_coalition_map_by_receipt(receipt_id: str):
     row = await asyncio.to_thread(load_coalition_payload, receipt_id.strip())
     if not row:
         raise HTTPException(status_code=404, detail="Coalition map not found")
