@@ -1,7 +1,7 @@
 """
-Public Narrative layer — framing analysis for how outlets may cover a claim (model-informed).
-
-Does not fetch live outlet pages; outputs structured JSON with explicit confidence note.
+Public Narrative + Global Perspectives layer.
+Given a claim or narrative, returns how different regional media ecosystems
+are framing the same story — with divergence points and what nobody is saying.
 """
 
 from __future__ import annotations
@@ -13,95 +13,168 @@ from typing import Any
 
 import anthropic
 
-FRAMING_PROMPT = """You are a media framing analyst for a public record verification system.
+MEDIA_ECOSYSTEMS = [
+    {
+        "id": "western_anglophone",
+        "label": "Western / Anglophone",
+        "outlets": ["AP News", "Reuters", "BBC", "New York Times", "Washington Post"],
+    },
+    {
+        "id": "russian_state",
+        "label": "Russian / state media",
+        "outlets": ["RT", "TASS", "Pravda", "Sputnik"],
+    },
+    {
+        "id": "iranian_regional",
+        "label": "Iranian / regional",
+        "outlets": ["PressTV", "Islamic Republic News Agency", "Tasnim News"],
+    },
+    {
+        "id": "chinese_state",
+        "label": "Chinese / state media",
+        "outlets": ["Xinhua", "CGTN", "Global Times", "People's Daily"],
+    },
+    {
+        "id": "arab_gulf",
+        "label": "Arab / Gulf",
+        "outlets": ["Al Jazeera", "Al Arabiya", "Gulf News", "Middle East Eye"],
+    },
+    {
+        "id": "israeli",
+        "label": "Israeli",
+        "outlets": ["Haaretz", "Times of Israel", "Jerusalem Post", "Ynet"],
+    },
+    {
+        "id": "south_asian",
+        "label": "South Asian",
+        "outlets": ["Dawn (Pakistan)", "The Hindu", "Hindustan Times", "Daily Star (Bangladesh)"],
+    },
+    {
+        "id": "european",
+        "label": "European",
+        "outlets": ["Der Spiegel", "Le Monde", "El País", "Euronews"],
+    },
+]
 
-Given a narrative or claim, analyze how different news outlets frame this story.
-Focus on:
-1. Word choice differences (e.g. "warns" vs "threatens" vs "promises retaliation")
-2. What each outlet emphasizes or de-emphasizes
-3. Which sources each outlet cites
-4. What is present in some framings but absent in others
-5. Whether any outlet presents contested facts as settled
+GLOBAL_PERSPECTIVES_PROMPT = """You are a global media framing analyst for a public record verification system.
+
+Given a narrative or claim, analyze how different regional media ecosystems are framing this story.
+
+For each ecosystem, analyze how the listed outlets typically cover this type of story based on their documented editorial positions, state affiliations, and historical coverage patterns.
+
+Be precise and specific. Do not be neutral to the point of uselessness. Name the actual framing differences. If Russian state media frames something as Western aggression and Western media frames it as Russian aggression, say that clearly.
 
 Return ONLY valid JSON. No preamble. No markdown fences.
 
 Format:
 {
-  "claim": "the core claim being analyzed",
-  "framings": [
+  "claim": "the core claim being analyzed in one sentence",
+  "ecosystems": [
     {
-      "outlet": "outlet name",
-      "framing_summary": "one sentence describing how this outlet frames it",
-      "key_word_choices": ["word1", "word2"],
-      "emphasized": "what this outlet emphasizes",
-      "absent": "what this outlet omits or downplays",
-      "confidence_tier": "official_primary|official_secondary|single_source"
+      "id": "ecosystem_id",
+      "label": "ecosystem label",
+      "outlets": ["outlet1", "outlet2"],
+      "framing": "2-3 sentence description of how this ecosystem frames this story",
+      "key_language": ["specific word or phrase choices", "that distinguish this framing"],
+      "emphasized": "what this ecosystem emphasizes",
+      "minimized": "what this ecosystem downplays or omits",
+      "confidence_tier": "official_primary|official_secondary|single_source|structural_heuristic",
+      "confidence_note": "brief note on how reliable this characterization is"
     }
   ],
-  "divergence_points": ["point where framings conflict 1", "point 2"],
-  "consensus_elements": ["what all outlets agree on"],
-  "absent_from_all": ["what no outlet addresses"]
-}"""
+  "divergence_points": [
+    "specific point where ecosystem framings directly conflict"
+  ],
+  "consensus_elements": [
+    "factual element that all ecosystems agree on"
+  ],
+  "absent_from_all": [
+    "important angle, voice, or fact that no major ecosystem is covering"
+  ],
+  "most_divergent_pair": {
+    "ecosystem_a": "id",
+    "ecosystem_b": "id",
+    "reason": "why these two framings are most irreconcilable"
+  }
+}
+
+Ecosystems to analyze:
+__ECOSYSTEMS_JSON__
+
+Narrative to analyze:
+__NARRATIVE__"""
 
 
-def run_public_narrative(narrative: str) -> dict[str, Any]:
+def run_global_perspectives(narrative: str) -> dict[str, Any]:
     """
-    Use Claude to analyze how this narrative might be framed across major outlets.
+    Use Claude to analyze how this narrative is being framed
+    across regional media ecosystems worldwide.
     """
     text = (narrative or "").strip()
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return {
             "claim": text[:200],
-            "framings": [],
+            "ecosystems": [],
             "divergence_points": [],
             "consensus_elements": [],
             "absent_from_all": [],
+            "most_divergent_pair": None,
             "error": "ANTHROPIC_API_KEY not set",
-            "confidence_tier": "structural_heuristic",
         }
 
     client = anthropic.Anthropic(api_key=key)
 
+    ecosystems_json = json.dumps(
+        [{"id": e["id"], "label": e["label"], "outlets": e["outlets"]} for e in MEDIA_ECOSYSTEMS],
+        indent=2,
+    )
+    prompt = (
+        GLOBAL_PERSPECTIVES_PROMPT.replace("__ECOSYSTEMS_JSON__", ecosystems_json).replace(
+            "__NARRATIVE__",
+            text[:4000],
+        )
+    )
+
     try:
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{FRAMING_PROMPT}\n\nNarrative to analyze:\n{text[:3000]}",
-                }
-            ],
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}],
         )
         raw = message.content[0].text.strip()
         if raw.startswith("```"):
             raw = re.sub(r"^```[a-z]*\n?", "", raw)
             raw = re.sub(r"\n?```$", "", raw)
         result: dict[str, Any] = json.loads(raw)
+        result["source"] = "model_knowledge"
         result["confidence_note"] = (
-            "Framing analysis based on model knowledge of coverage patterns. "
-            "Verify against live sources before citing."
+            "Framing analysis based on documented editorial positions and historical "
+            "coverage patterns of named outlets. Characterizations reflect general "
+            "tendencies, not any specific article. Verify against live sources."
         )
-        result.setdefault("confidence_tier", "structural_heuristic")
         return result
     except json.JSONDecodeError as e:
         return {
             "claim": text[:200],
-            "framings": [],
+            "ecosystems": [],
             "divergence_points": [],
             "consensus_elements": [],
             "absent_from_all": [],
+            "most_divergent_pair": None,
             "error": f"Parse error: {e}",
-            "confidence_tier": "structural_heuristic",
         }
     except Exception as e:  # noqa: BLE001
         return {
             "claim": text[:200],
-            "framings": [],
+            "ecosystems": [],
             "divergence_points": [],
             "consensus_elements": [],
             "absent_from_all": [],
+            "most_divergent_pair": None,
             "error": str(e),
-            "confidence_tier": "structural_heuristic",
         }
+
+
+# Keep backward compat — old endpoint used run_public_narrative
+run_public_narrative = run_global_perspectives

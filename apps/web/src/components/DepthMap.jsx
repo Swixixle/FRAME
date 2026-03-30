@@ -122,63 +122,114 @@ function entityWorthLookup(name, _confidenceTier) {
   return true;
 }
 
-function PublicNarrativePanel({ result }) {
+const ECOSYSTEM_ACCENT = {
+  western_anglophone: "#4a9eff",
+  russian_state: "#e05252",
+  iranian_regional: "#2ecc71",
+  chinese_state: "#e74c3c",
+  arab_gulf: "#f39c12",
+  israeli: "#9b59b6",
+  south_asian: "#1abc9c",
+  european: "#3498db",
+};
+
+function GlobalPerspectivesPanel({ result }) {
+  const [expanded, setExpanded] = useState({});
+
   if (!result || typeof result !== "object") return null;
-  const framings = result.framings || [];
+
+  const ecosystems = result.ecosystems || [];
   const divergence = result.divergence_points || [];
   const consensus = result.consensus_elements || [];
   const absent = result.absent_from_all || [];
+  const mostDivergent = result.most_divergent_pair;
+
+  function toggle(id) {
+    setExpanded((p) => ({ ...p, [id]: !p[id] }));
+  }
 
   return (
-    <div className="depth-public-narrative">
-      <h3 className="depth-inline-title">Public narrative framing</h3>
+    <div className="depth-global-perspectives">
+      <h3 className="depth-inline-title">Global perspectives</h3>
       {result.error ? <p className="depth-banner-error">{result.error}</p> : null}
-      <p className="depth-muted depth-public-narrative-note">
-        {result.confidence_note ||
-          "Framing analysis is model-informed; verify against live sources before citing."}
-      </p>
+      {result.claim ? <p className="depth-gp-claim">&quot;{result.claim}&quot;</p> : null}
+      {(result.confidence_note || !result.error) ? (
+        <p className="depth-muted depth-gp-note" style={{ fontSize: "11px", marginBottom: "14px" }}>
+          {result.confidence_note ||
+            "Framing analysis is model-informed; verify against live sources before citing."}
+        </p>
+      ) : null}
 
-      {framings.length > 0 ? (
-        <div className="depth-framings">
-          {framings.map((f, i) => (
-            <div key={i} className="depth-framing-row">
-              <div className="depth-framing-outlet">{f.outlet}</div>
-              <div className="depth-framing-summary">{f.framing_summary}</div>
-              {f.key_word_choices?.length > 0 ? (
-                <div className="depth-framing-words">
-                  {f.key_word_choices.map((w, j) => (
-                    <code key={j} className="depth-framing-word">
-                      {w}
-                    </code>
-                  ))}
-                </div>
-              ) : null}
-              {f.emphasized ? (
-                <div className="depth-framing-emphasized">
-                  <span className="depth-muted">Emphasizes: </span>
-                  {f.emphasized}
-                </div>
-              ) : null}
-              {f.absent ? (
-                <div className="depth-framing-absent">
-                  <span className="depth-muted">Absent: </span>
-                  {f.absent}
-                </div>
-              ) : null}
-              {f.confidence_tier ? (
-                <div className="depth-framing-tier">
-                  <TierBadge tier={f.confidence_tier} />
-                </div>
-              ) : null}
-            </div>
-          ))}
+      {mostDivergent ? (
+        <div className="depth-gp-divergent-pair">
+          <span className="depth-gp-divergent-label">Most irreconcilable:</span>{" "}
+          {mostDivergent.ecosystem_a} vs {mostDivergent.ecosystem_b}
+          {mostDivergent.reason ? (
+            <span className="depth-gp-divergent-reason"> — {mostDivergent.reason}</span>
+          ) : null}
         </div>
       ) : null}
 
+      <div className="depth-gp-ecosystems">
+        {ecosystems.map((eco) => {
+          const accent = ECOSYSTEM_ACCENT[eco.id] || "#888";
+          const isOpen = expanded[eco.id];
+          return (
+            <div key={eco.id} className="depth-gp-ecosystem" style={{ borderLeftColor: accent }}>
+              <button
+                type="button"
+                className="depth-gp-ecosystem-head"
+                onClick={() => toggle(eco.id)}
+              >
+                <span className="depth-gp-ecosystem-label">{eco.label}</span>
+                <span className="depth-gp-outlets">{(eco.outlets || []).join(", ")}</span>
+                <span className="depth-gp-chevron">{isOpen ? "▼" : "▶"}</span>
+              </button>
+
+              <p className="depth-gp-framing">{eco.framing}</p>
+
+              {isOpen ? (
+                <div className="depth-gp-detail">
+                  {eco.key_language?.length > 0 ? (
+                    <div className="depth-gp-keywords">
+                      {eco.key_language.map((w, i) => (
+                        <code key={i} className="depth-gp-keyword">
+                          {w}
+                        </code>
+                      ))}
+                    </div>
+                  ) : null}
+                  {eco.emphasized ? (
+                    <div className="depth-gp-row">
+                      <span className="depth-gp-row-label">Emphasizes</span>
+                      <span>{eco.emphasized}</span>
+                    </div>
+                  ) : null}
+                  {eco.minimized ? (
+                    <div className="depth-gp-row">
+                      <span className="depth-gp-row-label">Minimizes</span>
+                      <span className="depth-muted">{eco.minimized}</span>
+                    </div>
+                  ) : null}
+                  {eco.confidence_note ? (
+                    <div className="depth-gp-row">
+                      <span className="depth-gp-row-label">Confidence</span>
+                      <span className="depth-muted" style={{ fontSize: "11px" }}>
+                        {eco.confidence_note}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
       {divergence.length > 0 ? (
-        <div className="depth-narrative-section">
-          <strong>Where framings conflict</strong>
-          <ul>
+        <div className="depth-gp-section">
+          <strong className="depth-gp-section-title">Where framings conflict</strong>
+          <ul className="depth-gp-list">
             {divergence.map((d, i) => (
               <li key={i}>{d}</li>
             ))}
@@ -187,9 +238,9 @@ function PublicNarrativePanel({ result }) {
       ) : null}
 
       {consensus.length > 0 ? (
-        <div className="depth-narrative-section">
-          <strong>What outlets tend to agree on</strong>
-          <ul>
+        <div className="depth-gp-section">
+          <strong className="depth-gp-section-title">What all agree on</strong>
+          <ul className="depth-gp-list depth-gp-list-consensus">
             {consensus.map((c, i) => (
               <li key={i}>{c}</li>
             ))}
@@ -198,9 +249,9 @@ function PublicNarrativePanel({ result }) {
       ) : null}
 
       {absent.length > 0 ? (
-        <div className="depth-narrative-section">
-          <strong>Often absent from coverage</strong>
-          <ul>
+        <div className="depth-gp-section">
+          <strong className="depth-gp-section-title">What nobody is covering</strong>
+          <ul className="depth-gp-list depth-gp-list-absent">
             {absent.map((a, i) => (
               <li key={i}>{a}</li>
             ))}
@@ -1781,29 +1832,28 @@ export default function DepthMap() {
                     <p className="depth-muted depth-trace-hint">Tracing spread…</p>
                   ) : null}
                   {!spreadResult && !spreadError && !searchBusy ? (
-                    <div className="depth-public-narrative-prompt">
-                      <p className="depth-limited-msg">
-                        {narrative.trim()
-                          ? "Spread layer has not been loaded yet. Click Trace at depth above, or compare outlet framing below without spread indicators."
-                          : "Enter a narrative and click Trace at depth to load spread signals."}
+                    <div className="depth-gp-primary">
+                      <p className="depth-muted" style={{ marginBottom: "12px" }}>
+                        No platform spread signals detected. The story may be too recent, too
+                        regional, or not yet syndicated across tracked channels.
                       </p>
-                      {!publicNarrativeResult && !publicNarrativeLoading && narrative.trim() ? (
+                      {narrative.trim() && !publicNarrativeResult && !publicNarrativeLoading ? (
                         <button
                           type="button"
-                          className="depth-btn depth-btn-ghost"
+                          className="depth-btn depth-btn-primary"
                           onClick={() => fetchPublicNarrative(narrative)}
                         >
-                          How are outlets framing this?
+                          🌍 Show global perspectives
                         </button>
                       ) : null}
                       {publicNarrativeLoading ? (
-                        <p className="depth-muted">Analyzing coverage framing…</p>
+                        <p className="depth-muted">Pulling global framing analysis…</p>
                       ) : null}
                       {publicNarrativeError ? (
                         <p className="depth-banner-error">{publicNarrativeError}</p>
                       ) : null}
                       {publicNarrativeResult ? (
-                        <PublicNarrativePanel result={publicNarrativeResult} />
+                        <GlobalPerspectivesPanel result={publicNarrativeResult} />
                       ) : null}
                     </div>
                   ) : null}
@@ -1812,29 +1862,52 @@ export default function DepthMap() {
                   {spreadResult &&
                   !spreadError &&
                   !searchBusy &&
-                  !(spreadResult.spread_indicators || []).length &&
-                  !(spreadResult.platforms_mentioned || []).length ? (
-                    <div className="depth-public-narrative-prompt depth-public-narrative-after-spread">
-                      <p className="depth-limited-msg">
-                        No spread-indicator signals were detected in this narrative.
-                      </p>
-                      {!publicNarrativeResult && !publicNarrativeLoading ? (
+                  ((spreadResult.spread_indicators || []).length > 0 ||
+                    (spreadResult.platforms_mentioned || []).length > 0) ? (
+                    <div style={{ marginTop: "16px" }}>
+                      {narrative.trim() && !publicNarrativeResult && !publicNarrativeLoading ? (
                         <button
                           type="button"
                           className="depth-btn depth-btn-ghost"
                           onClick={() => fetchPublicNarrative(narrative)}
                         >
-                          How are outlets framing this?
+                          🌍 Show global perspectives
                         </button>
                       ) : null}
                       {publicNarrativeLoading ? (
-                        <p className="depth-muted">Analyzing coverage framing…</p>
+                        <p className="depth-muted">Pulling global framing analysis…</p>
                       ) : null}
                       {publicNarrativeError ? (
                         <p className="depth-banner-error">{publicNarrativeError}</p>
                       ) : null}
                       {publicNarrativeResult ? (
-                        <PublicNarrativePanel result={publicNarrativeResult} />
+                        <GlobalPerspectivesPanel result={publicNarrativeResult} />
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {spreadResult &&
+                  !spreadError &&
+                  !searchBusy &&
+                  !(spreadResult.spread_indicators || []).length &&
+                  !(spreadResult.platforms_mentioned || []).length ? (
+                    <div style={{ marginTop: "16px" }}>
+                      {narrative.trim() && !publicNarrativeResult && !publicNarrativeLoading ? (
+                        <button
+                          type="button"
+                          className="depth-btn depth-btn-ghost"
+                          onClick={() => fetchPublicNarrative(narrative)}
+                        >
+                          🌍 Show global perspectives
+                        </button>
+                      ) : null}
+                      {publicNarrativeLoading ? (
+                        <p className="depth-muted">Pulling global framing analysis…</p>
+                      ) : null}
+                      {publicNarrativeError ? (
+                        <p className="depth-banner-error">{publicNarrativeError}</p>
+                      ) : null}
+                      {publicNarrativeResult ? (
+                        <GlobalPerspectivesPanel result={publicNarrativeResult} />
                       ) : null}
                     </div>
                   ) : null}

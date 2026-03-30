@@ -93,7 +93,7 @@ from actor_ledger_api import (
     validate_actor_slug,
 )
 from pattern_api import get_pattern_lib_payload, run_pattern_match
-from public_narrative_api import run_public_narrative
+from public_narrative_api import run_global_perspectives
 from spread_api import run_spread
 from origin_api import run_origin
 from actor_layer_api import run_actor_layer
@@ -271,11 +271,12 @@ class AnalyzeArticleBody(BaseModel):
 
 
 class PublicNarrativePostBody(BaseModel):
-    """Public narrative / framing analysis (model-informed, not live fetches)."""
+    """Global perspectives / public narrative (model-informed, not live fetches)."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
-    narrative: str = Field(..., min_length=1, max_length=20000)
+    narrative: str | None = Field(None, max_length=20000)
+    query: str | None = Field(None, max_length=20000)
 
 
 class ActorEventBody(BaseModel):
@@ -1058,15 +1059,24 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     return attach_article_analysis_signing(receipt_payload)
 
 
-@app.post("/v1/public-narrative")
-async def public_narrative_post(body: PublicNarrativePostBody) -> dict[str, Any]:
+@app.post("/v1/global-perspectives")
+async def global_perspectives_post(body: PublicNarrativePostBody) -> dict[str, Any]:
     """
-    Model-informed framing comparison across major outlets (no live page fetches).
+    Model-informed framing by regional media ecosystem (no live page fetches).
     """
+    narrative = (body.narrative or body.query or "").strip()
+    if not narrative:
+        raise HTTPException(status_code=400, detail="narrative is required")
     try:
-        return await asyncio.to_thread(run_public_narrative, body.narrative.strip())
+        return await asyncio.to_thread(run_global_perspectives, narrative)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/v1/public-narrative")
+async def public_narrative_post(body: PublicNarrativePostBody) -> dict[str, Any]:
+    """Backward-compatible alias for global perspectives."""
+    return await global_perspectives_post(body)
 
 
 @app.get("/v1/pattern-lib")
