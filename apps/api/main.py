@@ -112,7 +112,11 @@ from receipt_store import (
     list_recent_receipts,
     store_receipt,
 )
-from report_api import attach_article_analysis_signing, build_extended_report_async
+from report_api import (
+    attach_article_analysis_signing,
+    build_article_analysis_signing_body,
+    build_extended_report_async,
+)
 from surface_adapter import SLENDERMAN_SURFACE_BASELINE, run_surface_layer
 from dispute_api import pattern_ids_in_library, run_dispute_append, run_dispute_get
 from verify_record import verify_generic_record
@@ -131,22 +135,10 @@ def _repo_root() -> Path:
 
 
 def jcs_canonicalize(obj: Any) -> str:
-    """RFC 8785 canonical JSON using repo `canonicalize` (Node)."""
-    root = _repo_root()
-    script = root / "scripts" / "jcs-stringify.mjs"
-    payload = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
-    proc = subprocess.run(
-        ["node", str(script)],
-        input=payload,
-        text=True,
-        capture_output=True,
-        check=False,
-        cwd=str(root),
-        env={**os.environ},
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr or "JCS subprocess failed")
-    return proc.stdout
+    """RFC 8785 JCS — pure Python (`jcs_canonicalize.py`)."""
+    from jcs_canonicalize import jcs_dumps
+
+    return jcs_dumps(obj)
 
 
 def sha256_hex_jcs(obj: Any) -> str:
@@ -512,7 +504,11 @@ class ContradictionAnalysisRequest(BaseModel):
     entity_name: str = Field(..., min_length=1)
 
 
-app = FastAPI(title="Frame API", version="0.1.0")
+app = FastAPI(
+    title="PUBLIC EYE API",
+    description="Evidence-linked investigations and signed public-record receipts.",
+    version="1.0.0",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -796,6 +792,19 @@ async def pitch_page() -> FileResponse:
     )
 
 
+@app.get("/verify")
+async def verify_page() -> FileResponse:
+    """PUBLIC EYE journalist verifier — static `apps/web/public/verify.html`."""
+    path = _repo_root() / "apps" / "web" / "public" / "verify.html"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="verify.html not found")
+    return FileResponse(
+        str(path),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        media_type="text/html",
+    )
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     """Base URL liveness (some checks hit `/` instead of `/health`)."""
@@ -844,10 +853,17 @@ def status():
         "ASSEMBLYAI_API_KEY",
         "SEC_EDGAR_USER_AGENT",
     ]
-    return {
+    out = {
         k: "set" if os.environ.get(k) else "missing"
         for k in keys
     }
+    try:
+        from report_api import _frame_public_key_spki_b64
+
+        out["public_key"] = _frame_public_key_spki_b64()
+    except Exception:
+        out["public_key"] = None
+    return out
 
 
 @app.get("/v1/schema-baselines")
@@ -1135,6 +1151,25 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         "generated_at": now,
     }
     signed_payload = attach_article_analysis_signing(receipt_payload)
+    try:
+        narrative_for_gp = (
+            str(signed_payload.get("article_topic") or "").strip()
+            or str((signed_payload.get("article") or {}).get("title") or "").strip()
+        )
+        if narrative_for_gp:
+            gp_result = await asyncio.to_thread(
+                run_global_perspectives,
+                narrative_for_gp,
+            )
+            if gp_result and isinstance(gp_result, dict):
+                signed_payload["global_perspectives"] = gp_result
+    except Exception as _gp_err:  # noqa: BLE001
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "global_perspectives failed in analyze_article: %s",
+            _gp_err,
+        )
     try:
         store_receipt(signed_payload)
     except Exception:  # noqa: BLE001
@@ -4841,6 +4876,14 @@ async def verify_receipt(request: Request) -> dict[str, Any]:
             detail="Receipt must be a JSON object",
         )
 
+    # Normalize snake_case receipt fields → camelCase for verifier compatibility
+    if "public_key" in data and "publicKey" not in data:
+        data["publicKey"] = data["public_key"]
+    if "content_hash" in data and "contentHash" not in data:
+        data["contentHash"] = data["content_hash"]
+    if "signature" not in data and "frame_signature" in data:
+        data["signature"] = data["frame_signature"]
+
     # Generic JCS + Ed25519 (hex) record verify — pattern lib, Rabbit Hole, etc.
     if (
         isinstance(data.get("record"), dict)
@@ -4856,26 +4899,64 @@ async def verify_receipt(request: Request) -> dict[str, Any]:
 
     reasons: list[str] = []
 
-    # Recompute contentHash — strip same fields as TypeScript
+    try:
+        from receipt_versioning import assert_receipt_version_compatible
+
+        assert_receipt_version_compatible(data)
+    except ValueError as exc:
+        reasons.append(str(exc))
+
+    ch = data.get("content_hash") or data.get("contentHash")
+    pub_key_b64 = data.get("public_key") or data.get("publicKey", "")
+    sig_b64 = data.get("signature", "")
+
+    if data.get("receipt_type") and ch and sig_b64 and pub_key_b64:
+        narrow = build_article_analysis_signing_body(data)
+        try:
+            canon_n = jcs_canonicalize(narrow)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        expected_ch = hashlib.sha256(canon_n.encode("utf-8")).hexdigest()
+        if expected_ch != ch:
+            reasons.append("content_hash does not match signed semantic fields (JCS)")
+        msg = expected_ch.encode("utf-8")
+        try:
+            der = base64.b64decode(pub_key_b64, validate=True)
+            pub = serialization.load_der_public_key(der)
+            if not isinstance(pub, Ed25519PublicKey):
+                reasons.append("public_key is not Ed25519")
+            else:
+                sig = base64.b64decode(sig_b64, validate=True)
+                pub.verify(sig, msg)
+        except Exception:
+            reasons.append("signature verification failed")
+        return {"ok": len(reasons) == 0, "reasons": reasons}
+
     content_hash_body = {
-        k: v for k, v in data.items() if k not in ("contentHash", "signature", "publicKey")
+        k: v
+        for k, v in data.items()
+        if k
+        not in (
+            "contentHash",
+            "content_hash",
+            "signature",
+            "publicKey",
+            "public_key",
+        )
     }
     expected_hash = sha256_hex_jcs(content_hash_body)
-    if expected_hash != data.get("contentHash"):
+    stored_ch = data.get("contentHash") or data.get("content_hash")
+    if stored_ch and expected_hash != stored_ch:
         reasons.append("contentHash does not match JCS payload")
 
-    # Recompute signing digest — strip only signature
     signing_body = {k: v for k, v in data.items() if k != "signature"}
     try:
         canon_signing = jcs_canonicalize(signing_body)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    digest = hashlib.sha256(canon_signing.encode("utf-8")).digest()
-
-    # Verify Ed25519 signature
-    pub_key_b64 = data.get("publicKey", "")
-    sig_b64 = data.get("signature", "")
+    digest_hex = hashlib.sha256(canon_signing.encode("utf-8")).hexdigest()
+    digest_msg = digest_hex.encode("utf-8")
 
     if not pub_key_b64 or not sig_b64:
         reasons.append("Missing publicKey or signature")
@@ -4888,7 +4969,7 @@ async def verify_receipt(request: Request) -> dict[str, Any]:
             else:
                 try:
                     sig = base64.b64decode(sig_b64, validate=True)
-                    pub.verify(sig, digest)
+                    pub.verify(sig, digest_msg)
                 except Exception:
                     reasons.append("signature verification failed")
         except Exception:
