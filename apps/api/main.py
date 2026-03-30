@@ -105,7 +105,13 @@ from claim_extractor import extract_claims
 from claim_router import build_query_for_adapter, route_claim as route_article_claim
 from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
-from receipt_store import ensure_table, get_receipt as load_stored_receipt, list_recent_receipts, store_receipt
+from receipt_store import (
+    ensure_coalition_maps_table,
+    ensure_table,
+    get_receipt as load_stored_receipt,
+    list_recent_receipts,
+    store_receipt,
+)
 from report_api import attach_article_analysis_signing, build_extended_report_async
 from surface_adapter import SLENDERMAN_SURFACE_BASELINE, run_surface_layer
 from dispute_api import pattern_ids_in_library, run_dispute_append, run_dispute_get
@@ -516,9 +522,11 @@ app.add_middleware(
 
 from api.dossier_route import router as dossier_http_router  # noqa: E402
 from api.frames import router as frames_http_router  # noqa: E402
+from coalition_api import router as coalition_http_router  # noqa: E402
 
 app.include_router(frames_http_router)
 app.include_router(dossier_http_router)
+app.include_router(coalition_http_router, prefix="/v1")
 
 _web_dir = _repo_root() / "apps" / "web"
 if _web_dir.is_dir():
@@ -574,6 +582,12 @@ async def capture_schema_baselines() -> None:
         import logging
 
         logging.warning("Receipt table creation failed: %s", exc)
+    try:
+        ensure_coalition_maps_table()
+    except Exception as exc:  # noqa: BLE001
+        import logging
+
+        logging.warning("Coalition maps table creation failed: %s", exc)
     asyncio.create_task(_run_schema_baseline_capture())
     asyncio.create_task(_verify_signing_pipeline())
 

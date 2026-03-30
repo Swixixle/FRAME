@@ -65,6 +65,94 @@ def ensure_table() -> None:
         conn.close()
 
 
+def ensure_coalition_maps_table() -> None:
+    """Coalition map artifacts (async secondary analysis per receipt)."""
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS coalition_maps (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    receipt_id TEXT NOT NULL UNIQUE
+                        REFERENCES frame_receipts(id) ON DELETE CASCADE,
+                    coalition_id TEXT NOT NULL UNIQUE,
+                    payload JSONB NOT NULL,
+                    signed BOOLEAN DEFAULT FALSE,
+                    signature TEXT,
+                    generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_coalition_receipt "
+                "ON coalition_maps (receipt_id)"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_coalition_map(receipt_id: str) -> dict[str, Any] | None:
+    """Return stored coalition map API payload, or None."""
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                "SELECT payload FROM coalition_maps WHERE receipt_id = %s",
+                (receipt_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            payload = row["payload"]
+            if isinstance(payload, dict):
+                return payload
+            if isinstance(payload, str):
+                return json.loads(payload)
+            return dict(payload) if payload is not None else None
+    finally:
+        conn.close()
+
+
+def save_coalition_map(payload: dict[str, Any]) -> None:
+    """Upsert full coalition map response JSON."""
+    rid = str(payload.get("receipt_id", "")).strip()
+    cid = str(payload.get("coalition_id", "")).strip()
+    if not rid or not cid:
+        raise ValueError("receipt_id and coalition_id required")
+    signed = bool(payload.get("signed"))
+    signature = payload.get("signature")
+    generated = payload.get("generated_at") or None
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO coalition_maps
+                    (receipt_id, coalition_id, payload, signed, signature, generated_at)
+                VALUES (%s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                ON CONFLICT (receipt_id) DO UPDATE SET
+                    coalition_id = EXCLUDED.coalition_id,
+                    payload = EXCLUDED.payload,
+                    signed = EXCLUDED.signed,
+                    signature = EXCLUDED.signature,
+                    generated_at = EXCLUDED.generated_at
+                """,
+                (
+                    rid,
+                    cid,
+                    psycopg2.extras.Json(payload),
+                    signed,
+                    signature,
+                    generated,
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def store_receipt(receipt: dict[str, Any]) -> str:
     """
     Store a receipt. Returns the canonical receipt_id.
