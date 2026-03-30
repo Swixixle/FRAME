@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getApiBase } from "../apiBase.js";
 import { actorLedgerResolved, actorSlugCandidates } from "../utils/actorSlug.js";
@@ -147,7 +147,13 @@ function DisputePanel({ patternId, onClose }) {
   );
 }
 
-function SurfaceTraceFields({ trace, ledgerPresence }) {
+function SurfaceTraceFields({
+  trace,
+  ledgerPresence,
+  onActorDepth,
+  actorDepthByEntity,
+  actorDepthLoading,
+}) {
   return (
     <>
       <p className="depth-what">{trace.what}</p>
@@ -167,18 +173,28 @@ function SurfaceTraceFields({ trace, ledgerPresence }) {
             );
             return (
               <li key={w.name}>
-                {w.name} <TierBadge tier={w.confidence_tier} />
-                {!checked ? (
-                  <span className="depth-muted rabbit-nudge-pending" title="Checking ledger…">
-                    …
+                <div className="depth-who-line">
+                  <span>
+                    {w.name} <TierBadge tier={w.confidence_tier} />
                   </span>
-                ) : (
-                  <RabbitNudge
-                    href={inLedger ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}` : null}
-                    absent={!inLedger}
-                    label="deeper"
-                  />
-                )}
+                  {!checked ? (
+                    <span className="depth-muted rabbit-nudge-pending" title="Checking ledger…">
+                      …
+                    </span>
+                  ) : (
+                    <ActorDepthTrigger
+                      entityName={w.name}
+                      ledgerHref={
+                        inLedger
+                          ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}`
+                          : null
+                      }
+                      result={actorDepthByEntity[w.name]}
+                      loading={actorDepthLoading[w.name]}
+                      onLookup={onActorDepth}
+                    />
+                  )}
+                </div>
               </li>
             );
           })}
@@ -276,6 +292,179 @@ function actorLayerDeepHref(a) {
     return `https://en.wikipedia.org/wiki/${encodeURIComponent(a.wikipedia_title)}`;
   }
   return `${API}/v1/actor/${encodeURIComponent(a.slug)}`;
+}
+
+/** Inline panel: matches `ActorLayerResult` / `ActorRecord` from `POST /v1/actor-layer`. */
+function ActorDepthResultBody({ data }) {
+  if (!data || typeof data !== "object" || data.error) return null;
+  const found = data.actors_found || [];
+  const absent = data.actors_absent || [];
+  const checks = data.sources_checked || [];
+  return (
+    <div className="actor-depth-result">
+      {checks.length > 0 ? (
+        <div className="actor-depth-sources-checked">
+          {checks.map((s, k) => (
+            <span key={`${s.adapter}-${k}`} className={`source-badge status-${s.status}`}>
+              {s.adapter}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {data.confidence_tier ? (
+        <div className="depth-meta-row actor-depth-tier">
+          <TierBadge tier={data.confidence_tier} />
+          <span className="depth-muted">on-demand Layer 4</span>
+        </div>
+      ) : null}
+      {found.length > 0 ? (
+        found.map((actor, i) => {
+          const deepHref = actorLayerDeepHref(actor);
+          const wd = actor.wikidata_id
+            ? `https://www.wikidata.org/wiki/${encodeURIComponent(actor.wikidata_id)}`
+            : null;
+          const wp = actor.wikipedia_title
+            ? `https://en.wikipedia.org/wiki/${encodeURIComponent(String(actor.wikipedia_title).replace(/ /g, "_"))}`
+            : null;
+          return (
+            <div key={actor.slug || `a-${i}`} className="actor-record">
+              {actor.name ? <div className="actor-name">{actor.name}</div> : null}
+              {actor.slug ? (
+                <code className="depth-actor-slug actor-slug-inline">{actor.slug}</code>
+              ) : null}
+              <div className="actor-depth-link-row">
+                {deepHref ? (
+                  <a
+                    href={deepHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="actor-link"
+                  >
+                    Primary record →
+                  </a>
+                ) : null}
+                {wd ? (
+                  <a href={wd} target="_blank" rel="noopener noreferrer" className="actor-link">
+                    Wikidata →
+                  </a>
+                ) : null}
+                {wp ? (
+                  <a href={wp} target="_blank" rel="noopener noreferrer" className="actor-link">
+                    Wikipedia →
+                  </a>
+                ) : null}
+                {actor.slug ? (
+                  <a
+                    href={`${API}/v1/actor/${encodeURIComponent(actor.slug)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="actor-link"
+                  >
+                    Ledger API →
+                  </a>
+                ) : null}
+              </div>
+              {(actor.aliases || []).length > 0 ? (
+                <div className="actor-aliases-block">
+                  <strong className="actor-aliases-label">Aliases</strong>
+                  <ul className="depth-spread-list actor-aliases-list">
+                    {(actor.aliases || []).map((al) => (
+                      <li key={al}>{al}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {(actor.events || []).length > 0 ? (
+                <ul className="actor-events-compact">
+                  {(actor.events || []).slice(0, 12).map((ev, j) => {
+                    const src = String(ev.source || "").trim();
+                    const srcIsUrl = /^https?:\/\//i.test(src);
+                    return (
+                      <li key={`${ev.date}-${j}`}>
+                        <span className="depth-actor-ev-date">{ev.date}</span>{" "}
+                        <span className="depth-muted">{ev.type}</span>
+                        {ev.confidence_tier ? <TierBadge tier={ev.confidence_tier} /> : null}
+                        <p className="depth-actor-ev-desc">{ev.description}</p>
+                        {src ? (
+                          <p className="depth-muted depth-actor-ev-src">
+                            {srcIsUrl ? (
+                              <a href={src} target="_blank" rel="noopener noreferrer" className="actor-link">
+                                Source link →
+                              </a>
+                            ) : (
+                              src
+                            )}
+                          </p>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="depth-muted actor-no-events-note">No timeline events in this row.</p>
+              )}
+            </div>
+          );
+        })
+      ) : (
+        <div className="actor-not-found">
+          No actor record returned for this lookup (narrative may be too short to qualify for dynamic
+          resolution).
+          {absent.length > 0 ? (
+            <ul className="depth-spread-list actor-absent-inline-list">
+              {absent.map((x) => (
+                <li key={x.name}>
+                  {x.name}
+                  {x.wikidata_attempted ? (
+                    <span className="depth-muted"> — dynamic chain ran, no match</span>
+                  ) : (
+                    <span className="depth-muted"> — skipped or below relevance filter</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <span className="actor-absent-note">Absence and adapter status are reflected in badges above.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActorDepthTrigger({ entityName, ledgerHref, result, loading, onLookup }) {
+  const errMsg = result && result.error ? result.error : null;
+  const payload = result && !result.error ? result : null;
+  return (
+    <div className="actor-depth-trigger-wrap">
+      <span className="actor-depth-trigger-row">
+        <button
+          type="button"
+          className="rabbit-nudge rabbit-nudge--action"
+          onClick={() => onLookup(entityName)}
+          disabled={!!loading}
+          title="Run full Layer 4 lookup: ledger, Wikidata, Wikipedia, archives"
+        >
+          <span className="rabbit-nudge-emoji" aria-hidden="true">
+            🐇
+          </span>
+        </button>
+        {ledgerHref ? (
+          <a
+            href={ledgerHref}
+            className="actor-ledger-quick-link"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open actor ledger record"
+          >
+            Ledger
+          </a>
+        ) : null}
+      </span>
+      {loading ? <span className="actor-loading">Looking up public records…</span> : null}
+      {errMsg ? <div className="actor-depth-result actor-depth-error">{errMsg}</div> : null}
+      {payload ? <ActorDepthResultBody data={payload} /> : null}
+    </div>
+  );
 }
 
 const ACTOR_SOURCE_BADGE_ORDER = [
@@ -455,7 +644,7 @@ function ActorLookupSourceBadge({ lookup_source: src }) {
   );
 }
 
-function ActorLayerFields({ actorLayer }) {
+function ActorLayerFields({ actorLayer, onActorDepth, actorDepthByEntity, actorDepthLoading }) {
   if (!actorLayer || typeof actorLayer !== "object") return null;
   const found = actorLayer.actors_found || [];
   const absent = actorLayer.actors_absent || [];
@@ -572,7 +761,17 @@ function ActorLayerFields({ actorLayer }) {
                     (no dynamic match)
                   </span>
                 ) : null}{" "}
-                <RabbitNudge href={null} absent={true} />
+                {onActorDepth ? (
+                  <ActorDepthTrigger
+                    entityName={x.name}
+                    ledgerHref={null}
+                    result={actorDepthByEntity?.[x.name]}
+                    loading={actorDepthLoading?.[x.name]}
+                    onLookup={onActorDepth}
+                  />
+                ) : (
+                  <RabbitNudge href={null} absent={true} />
+                )}
               </li>
             ))}
           </ul>
@@ -637,7 +836,13 @@ function SpreadResultFields({ spread }) {
   );
 }
 
-function MediaClaimsList({ claims, ledgerPresence }) {
+function MediaClaimsList({
+  claims,
+  ledgerPresence,
+  onActorDepth,
+  actorDepthByEntity,
+  actorDepthLoading,
+}) {
   if (!claims || claims.length === 0) return null;
   return (
     <details className="depth-media-claims">
@@ -656,8 +861,8 @@ function MediaClaimsList({ claims, ledgerPresence }) {
               <div className="depth-media-claim-meta">
                 <span className="depth-media-ts">{c.timestamp_label || "—"}</span>
                 {sp ? (
-                  <span className="depth-media-speaker">
-                    {sp}
+                  <span className="depth-media-speaker depth-media-speaker-block">
+                    <span className="depth-media-speaker-name">{sp}</span>
                     {!skipNudge ? (
                       !checked ? (
                         <span className="depth-muted rabbit-nudge-pending" title="Checking ledger…">
@@ -665,10 +870,16 @@ function MediaClaimsList({ claims, ledgerPresence }) {
                           …
                         </span>
                       ) : (
-                        <RabbitNudge
-                          href={inLedger ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}` : null}
-                          absent={!inLedger}
-                          label="deeper"
+                        <ActorDepthTrigger
+                          entityName={sp}
+                          ledgerHref={
+                            inLedger
+                              ? `${API}/v1/actor/${encodeURIComponent(resolvedSlug)}`
+                              : null
+                          }
+                          result={actorDepthByEntity[sp]}
+                          loading={actorDepthLoading[sp]}
+                          onLookup={onActorDepth}
                         />
                       )
                     ) : null}
@@ -924,6 +1135,48 @@ export default function DepthMap() {
   const [reportPayload, setReportPayload] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState(null);
+  const actorDepthInflight = useRef(new Set());
+  const [actorDepthByEntity, setActorDepthByEntity] = useState({});
+  const [actorDepthLoading, setActorDepthLoading] = useState({});
+
+  const fetchActorDepth = useCallback(async (entityName) => {
+    const key = (entityName || "").trim();
+    if (!key || actorDepthInflight.current.has(key)) return;
+    actorDepthInflight.current.add(key);
+    setActorDepthLoading((p) => ({ ...p, [key]: true }));
+    try {
+      const res = await fetch(`${API}/v1/actor-layer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ narrative: key }),
+      });
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+      if (!res.ok) {
+        const detail =
+          typeof data?.detail === "string"
+            ? data.detail
+            : data?.detail != null
+              ? JSON.stringify(data.detail)
+              : `HTTP ${res.status}`;
+        setActorDepthByEntity((p) => ({ ...p, [key]: { error: detail } }));
+      } else {
+        setActorDepthByEntity((p) => ({ ...p, [key]: data }));
+      }
+    } catch (e) {
+      setActorDepthByEntity((p) => ({
+        ...p,
+        [key]: { error: e.message || "Request failed" },
+      }));
+    } finally {
+      actorDepthInflight.current.delete(key);
+      setActorDepthLoading((p) => ({ ...p, [key]: false }));
+    }
+  }, []);
 
   const traceComplete = useMemo(
     () =>
@@ -1097,6 +1350,9 @@ export default function DepthMap() {
       setOpenDispute(null);
       setReportPayload(null);
       setReportError(null);
+      setActorDepthByEntity({});
+      setActorDepthLoading({});
+      actorDepthInflight.current.clear();
 
       const narrativeReq = {
         method: "POST",
@@ -1259,8 +1515,20 @@ export default function DepthMap() {
                           </span>
                         ) : null}
                       </div>
-                      <SurfaceTraceFields trace={surfaceResult} ledgerPresence={ledgerPresence} />
-                      <MediaClaimsList claims={surfaceResult.media_claims} ledgerPresence={ledgerPresence} />
+                      <SurfaceTraceFields
+                        trace={surfaceResult}
+                        ledgerPresence={ledgerPresence}
+                        onActorDepth={fetchActorDepth}
+                        actorDepthByEntity={actorDepthByEntity}
+                        actorDepthLoading={actorDepthLoading}
+                      />
+                      <MediaClaimsList
+                        claims={surfaceResult.media_claims}
+                        ledgerPresence={ledgerPresence}
+                        onActorDepth={fetchActorDepth}
+                        actorDepthByEntity={actorDepthByEntity}
+                        actorDepthLoading={actorDepthLoading}
+                      />
                     </div>
                   ) : null}
                   {exampleTrace && !surfaceResult && !searchBusy ? (
@@ -1268,7 +1536,13 @@ export default function DepthMap() {
                       <p className="depth-example-label">
                         <em>Example trace — Slenderman (inoculation baseline)</em>
                       </p>
-                      <SurfaceTraceFields trace={exampleTrace} ledgerPresence={ledgerPresence} />
+                      <SurfaceTraceFields
+                        trace={exampleTrace}
+                        ledgerPresence={ledgerPresence}
+                        onActorDepth={fetchActorDepth}
+                        actorDepthByEntity={actorDepthByEntity}
+                        actorDepthLoading={actorDepthLoading}
+                      />
                       <p className="depth-example-slenderman-note">
                         <em>
                           Slenderman was manufactured. We know exactly when, by whom, on which forum. This
@@ -1315,7 +1589,14 @@ export default function DepthMap() {
                     <p className="depth-limited-msg">Limited sourcing available at this depth.</p>
                   ) : null}
                   {actorLayerError ? <p className="depth-banner-error">{actorLayerError}</p> : null}
-                  {actorLayerResult ? <ActorLayerFields actorLayer={actorLayerResult} /> : null}
+                  {actorLayerResult ? (
+                    <ActorLayerFields
+                      actorLayer={actorLayerResult}
+                      onActorDepth={fetchActorDepth}
+                      actorDepthByEntity={actorDepthByEntity}
+                      actorDepthLoading={actorDepthLoading}
+                    />
+                  ) : null}
                 </div>
               ) : null}
 
