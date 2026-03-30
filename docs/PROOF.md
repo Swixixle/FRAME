@@ -1,181 +1,152 @@
-# FRAME — Proof of Build
+# Verifying a PUBLIC EYE receipt
 
-This document is the technical evidence record for Frame.  
-Every claim here is falsifiable against the live system.
-
----
-
-## What is Frame?
-
-Frame is a system that separates evidence from interpretation at scale  
-and proves the separation cryptographically.
-
-It generates signed, tamper-evident receipts documenting what public  
-records say about a claim, a piece of media, or a public figure —  
-and is explicit about what it could not find.
+Every investigation PUBLIC EYE produces is signed with Ed25519. Here's how to confirm a receipt is authentic — without trusting us.
 
 ---
 
-## Live System
-
-**Base URL:** https://frame-2yxu.onrender.com  
-**Status:** https://frame-2yxu.onrender.com/health
-
----
-
-## How to Verify Any Receipt
-
-Every Frame receipt contains a `signature` and `publicKey` field.  
-To verify independently:
+## The short version
 
 ```bash
-curl -s -X POST https://frame-2yxu.onrender.com/v1/verify-receipt \
+# Fetch the receipt
+curl -s "https://frame-2yxu.onrender.com/r/8449d4ca-9b30-4ef5-90e5-a9ada6635e91" \
+  | python3 -m json.tool | grep -E '"signed"|"signature"|"content_hash"|"public_key"'
+```
+
+If `signed` is `true`, the signature was valid at generation time. Use the steps below to verify it yourself right now.
+
+---
+
+## Full verification walkthrough
+
+### Step 1: Fetch the receipt
+
+```bash
+RECEIPT_ID="8449d4ca-9b30-4ef5-90e5-a9ada6635e91"
+
+curl -s "https://frame-2yxu.onrender.com/r/$RECEIPT_ID" > receipt.json
+cat receipt.json | python3 -m json.tool | head -20
+```
+
+### Step 2: Use the API verifier
+
+```bash
+curl -sS -X POST "https://frame-2yxu.onrender.com/v1/verify-receipt" \
   -H "Content-Type: application/json" \
-  -d @your-receipt.json
+  -d @receipt.json \
+  | python3 -m json.tool
 ```
 
-Expected response: `{"ok": true, "reasons": []}`
+Expected response:
+```json
+{
+  "ok": true,
+  "reasons": []
+}
+```
 
-The signing uses Ed25519 with JCS (RFC 8785) canonicalization.  
-The public key is embedded in every receipt.  
-Verification requires no trust in Frame's servers.
+If `ok` is `false`, the `reasons` array says what failed.
+
+### Step 3: Verify offline with Python (no trust required)
+
+```python
+import json, base64, hashlib
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives import serialization
+
+# Load the receipt
+with open("receipt.json") as f:
+    receipt = json.load(f)
+
+# Extract signing fields
+signature_b64 = receipt["signature"]
+public_key_b64 = receipt["public_key"]
+content_hash = receipt["content_hash"]
+
+# Reconstruct the signing body (everything except signature, public_key, receipt_url)
+signing_fields = {k: v for k, v in receipt.items()
+                  if k not in ("signature", "public_key", "receipt_url")}
+
+# Canonicalize (RFC 8785 JCS)
+# pip install canonicaljson
+import canonicaljson
+canonical = canonicaljson.encode_canonical_json(signing_fields).decode()
+
+# Compute hash
+computed_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+assert computed_hash == content_hash, f"Hash mismatch: {computed_hash} != {content_hash}"
+
+# Verify signature
+pub_key_der = base64.b64decode(public_key_b64)
+pub_key = Ed25519PublicKey.from_public_bytes(pub_key_der)  # or load_der_public_key
+
+digest_msg = computed_hash.encode("utf-8")
+sig_bytes = base64.b64decode(signature_b64)
+
+pub_key.verify(sig_bytes, digest_msg)  # raises if invalid
+print("✓ Signature valid. Receipt has not been altered.")
+```
+
+### Step 4: Verify with openssl
+
+```bash
+# Extract the public key
+python3 -c "
+import json, base64
+r = json.load(open('receipt.json'))
+open('pubkey.der', 'wb').write(base64.b64decode(r['public_key']))
+"
+
+# Convert DER to PEM
+openssl pkey -inform DER -pubin -in pubkey.der -out pubkey.pem
+
+# Get the content hash from the receipt
+HASH=$(python3 -c "import json; print(json.load(open('receipt.json'))['content_hash'])")
+echo -n "$HASH" > digest.txt
+
+# Extract the signature
+python3 -c "
+import json, base64
+r = json.load(open('receipt.json'))
+open('sig.bin', 'wb').write(base64.b64decode(r['signature']))
+"
+
+# Verify
+openssl pkeyutl -verify -pubin -inkey pubkey.pem \
+  -sigfile sig.bin -in digest.txt -rawin
+
+# Expected output: Signature Verified Successfully
+```
 
 ---
 
-## Curl Proofs (Run These Now)
+## What the content hash covers
 
-### 1. FEC Campaign Finance Receipt
+The hash covers everything in the receipt except three fields:
 
-```bash
-# Search for candidate by name
-curl -s "https://frame-2yxu.onrender.com/v1/fec-search?name=Ted%20Cruz"
+- `signature` — can't sign itself
+- `public_key` — appended after signing
+- `receipt_url` — assigned after storage, not part of the analysis
 
-# Generate signed receipt
-curl -s -X POST https://frame-2yxu.onrender.com/v1/generate-receipt \
-  -H "Content-Type: application/json" \
-  -d '{"candidateId": "S2TX00312"}'
-```
-
-Expected: signed receipt with `signature` field, FEC totals, split unknowns.
-
-### 2. Senate LDA Lobbying Receipt
-
-```bash
-curl -s -X POST https://frame-2yxu.onrender.com/v1/generate-lobbying-receipt \
-  -H "Content-Type: application/json" \
-  -d '{"name": "Exxon"}'
-```
-
-### 3. IRS 990 Nonprofit Receipt
-
-```bash
-curl -s -X POST https://frame-2yxu.onrender.com/v1/generate-990-receipt \
-  -H "Content-Type: application/json" \
-  -d '{"orgName": "Gates Foundation", "ein": "562618866"}'
-```
-
-Expected: receipt with $78B+ total assets from live ProPublica 990 data.
-
-### 4. Public Figure Wikidata Receipt
-
-```bash
-curl -s -X POST https://frame-2yxu.onrender.com/v1/generate-wikidata-receipt \
-  -H "Content-Type: application/json" \
-  -d '{"personName": "Tucker Carlson"}'
-```
-
-### 5. Media Hash + Chain of Custody
-
-```bash
-# Submit URL as async job
-curl -s -X POST https://frame-2yxu.onrender.com/v1/jobs \
-  -H "Content-Type: application/json" \
-  -d '{"source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/280px-PNG_transparency_demonstration_1.png"}'
-
-# Returns immediately with job_id — poll:
-curl -s https://frame-2yxu.onrender.com/v1/jobs/[job_id_from_above]
-```
-
-Expected: receipt with `sha256` hash, `chain_of_custody` block, split unknowns.
-
-### 6. Verify a Receipt
-
-```bash
-# Take any receipt from above and verify its signature
-curl -s -X POST https://frame-2yxu.onrender.com/v1/verify-receipt \
-  -H "Content-Type: application/json" \
-  -d '[paste receipt JSON here]'
-```
-
-Expected: `{"ok": true, "reasons": []}`
-
-### 7. Schema Baselines
-
-```bash
-curl -s https://frame-2yxu.onrender.com/v1/schema-baselines
-```
-
-Expected: baseline status for all 5 sources with hash and capture date.
+Everything else — the narrative, claims, sources, global perspectives, coalition data, timestamps — is included. If any of it changes, the hash changes, and the signature fails.
 
 ---
 
-## Architecture Claims and Where to Verify Them
+## Checking the public key
 
-| Claim | File | Verified By |
-|-------|------|-------------|
-| Ed25519 signing | `packages/signing/` | `npm test` — 5 passing |
-| JCS canonicalization (RFC 8785) | `packages/signing/` | signing tests |
-| Split unknowns schema | `packages/types/index.ts` | TypeScript types |
-| implication_risk on all claims | `packages/types/implication-notes.ts` | `buildClaim()` enforces |
-| Async job system | `apps/api/job_store.py` | curl proof above |
-| FetchAdapter interface | `apps/api/adapters/fetch_adapter.py` | interface definition |
-| Schema baselines | `apps/api/baselines/` | `/v1/schema-baselines` |
+The same public key is used for all receipts. You can confirm it hasn't changed:
+
+```bash
+curl -s "https://frame-2yxu.onrender.com/v1/status" | python3 -m json.tool | grep public_key
+```
+
+Compare that to the `public_key` field in any receipt. They should match.
 
 ---
 
-## Schema Baselines
+## What verification does not prove
 
-Captured at startup. Verified on each subsequent start.  
-Full baseline documents in `apps/api/baselines/`.
+- That the analysis is correct or complete
+- That the sources cited actually say what the receipt claims
+- That the article URL still resolves to the same content
 
-| Source | Purpose | Critical Fields |
-|--------|---------|-----------------|
-| fec | FEC campaign finance | candidate_id, total_receipts |
-| lda | Senate LDA lobbying | registrant_name, client_name, amount |
-| propublica_990 | IRS 990 nonprofits | ein, total_assets, total_revenue |
-| wikidata | Public figure biography | id, labels, claims |
-| meta_ad_library | Meta paid advertising | funding_entity, spend, page_name |
-
-Run `GET /v1/schema-baselines` for current hashes and capture timestamps.
-
----
-
-## Current Adapter Status
-
-| Adapter | Data Source | Status | Requires |
-|---------|------------|--------|---------|
-| FEC | api.open.fec.gov | Live | FEC_API_KEY (Render) |
-| LDA | lda.senate.gov | Live | None |
-| 990 | ProPublica | Live | None |
-| Wikidata | wikidata.org | Live | None |
-| Ad Library | graph.facebook.com | Configured | META_AD_LIBRARY_TOKEN |
-| Media Hash | SHA-256 | Live | None |
-| AI Detection | thehive.ai | Configured | HIVE_API_KEY |
-| OCR | Tesseract | Live | tesseract-ocr (system) |
-| yt-dlp fetch | Social platforms | Live | None (yt-dlp in requirements) |
-
----
-
-## Known Gaps (Honest)
-
-- `META_AD_LIBRARY_TOKEN` — token expires; System User token recommended for production
-- `HIVE_API_KEY` — not yet configured; AI detection returns `detector: none`
-- Salience algorithm uses rule-based fallback until corpus reaches N=100 receipts
-- Music dossier (Liner Notes) is specced but not yet built
-- Schema monitoring captures baselines but Rule Change Receipt generation not yet implemented
-- Job store is in-memory — resets on server restart (acceptable at current stage)
-
----
-
-*Generated: [date]*  
-*Repo: github.com/Swixixle/FRAME*
+Verification proves one thing: this receipt has not been altered since it was generated. The analysis quality is a separate question.
