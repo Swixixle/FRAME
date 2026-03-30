@@ -1,4 +1,4 @@
-# Frame
+# PUBLIC-EYE
 
 A cryptographic public record verification system.
 
