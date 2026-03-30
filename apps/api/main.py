@@ -4930,7 +4930,7 @@ async def verify_receipt(request: Request) -> dict[str, Any]:
     sig_b64 = data.get("signature", "")
 
     if data.get("receipt_type") and ch and sig_b64 and pub_key_b64:
-        narrow = build_article_analysis_signing_body(data)
+        narrow = {k: v for k, v in data.items() if k not in ("signature", "public_key", "receipt_url")}
         try:
             canon_n = jcs_canonicalize(narrow)
         except Exception as exc:
