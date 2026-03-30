@@ -1,7 +1,10 @@
 -- Full-text search on receipt + coalition payloads (PUBLIC EYE conflict search).
--- Applied via receipt_store.ensure_search_fts_indexes() on startup.
+-- Applied via receipt_store.ensure_search_fts_indexes() on startup (drop + create).
 
-CREATE INDEX IF NOT EXISTS idx_frame_receipts_fts ON frame_receipts
+DROP INDEX IF EXISTS idx_frame_receipts_fts;
+DROP INDEX IF EXISTS idx_coalition_maps_fts;
+
+CREATE INDEX idx_frame_receipts_fts ON frame_receipts
 USING GIN (
   to_tsvector(
     'english',
@@ -13,7 +16,7 @@ USING GIN (
   )
 );
 
-CREATE INDEX IF NOT EXISTS idx_coalition_maps_fts ON coalition_maps
+CREATE INDEX idx_coalition_maps_fts ON coalition_maps
 USING GIN (
   to_tsvector(
     'english',

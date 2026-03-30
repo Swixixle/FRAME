@@ -94,13 +94,21 @@ def ensure_coalition_maps_table() -> None:
 
 
 def ensure_search_fts_indexes() -> None:
-    """GIN full-text indexes on receipt + coalition payloads (see db/migrations/008)."""
+    """
+    GIN full-text indexes on receipt + coalition payloads (see db/migrations/008).
+
+    Drops existing FTS indexes first so a corrected expression (e.g. named_entities
+    cast precedence) replaces a bad index from an older deploy; CREATE INDEX IF NOT
+    EXISTS alone would leave the stale definition in place.
+    """
     conn = _get_conn()
     try:
         with conn.cursor() as cur:
+            cur.execute("DROP INDEX IF EXISTS idx_frame_receipts_fts")
+            cur.execute("DROP INDEX IF EXISTS idx_coalition_maps_fts")
             cur.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_frame_receipts_fts ON frame_receipts
+                CREATE INDEX idx_frame_receipts_fts ON frame_receipts
                 USING GIN (
                   to_tsvector(
                     'english',
@@ -115,7 +123,7 @@ def ensure_search_fts_indexes() -> None:
             )
             cur.execute(
                 """
-                CREATE INDEX IF NOT EXISTS idx_coalition_maps_fts ON coalition_maps
+                CREATE INDEX idx_coalition_maps_fts ON coalition_maps
                 USING GIN (
                   to_tsvector(
                     'english',
