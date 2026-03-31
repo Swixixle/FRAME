@@ -13,7 +13,8 @@ from bs4 import BeautifulSoup
 def fetch_article(url: str, timeout: int = 15) -> dict[str, Any]:
     """
     Fetch and clean article text from a URL.
-    Returns dict with: url, title, publication, text, word_count, truncated, fetch_error
+    Returns dict with: url, title, publication, author (optional), text, word_count,
+    truncated, fetch_error
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; Frame/1.0; +https://frame-2yxu.onrender.com)"
@@ -59,10 +60,23 @@ def fetch_article(url: str, timeout: int = 15) -> dict[str, Any]:
 
     publication = urlparse(url).netloc.replace("www.", "")
 
+    author: str | None = None
+    for attrs in (
+        {"name": re.compile(r"^author$", re.I)},
+        {"property": re.compile(r"^article:author$", re.I)},
+        {"name": re.compile(r"^byl$", re.I)},
+    ):
+        m = soup.find("meta", attrs=attrs)
+        if m and m.get("content"):
+            author = str(m.get("content")).strip() or None
+            if author:
+                break
+
     return {
         "url": url,
         "title": title,
         "publication": publication,
+        "author": author,
         "text": text,
         "word_count": len(words),
         "truncated": truncated,

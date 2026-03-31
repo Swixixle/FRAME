@@ -9,6 +9,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 from dotenv import load_dotenv
 
@@ -1307,6 +1308,8 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     if not url.startswith("http"):
         raise HTTPException(status_code=400, detail="url is required and must start with http")
 
+    logging.getLogger(__name__).info("[ANALYZE] Start | url=%r", url)
+
     article = await asyncio.to_thread(fetch_article, url)
     if article.get("fetch_error"):
         raise HTTPException(
@@ -1433,16 +1436,51 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         "sources_checked": adapter_names,
         "generated_at": now,
     }
+    coverage_context = ""
     try:
+        from comparative_coverage import coverage_result_for_receipt, format_coverage_for_prompt
         from source_expansion import expand_sources
 
-        extra_sources = await asyncio.to_thread(
-            expand_sources,
-            str(receipt_payload.get("article_topic") or ""),
-            list(receipt_payload.get("named_entities") or []),
-            url,
-            12,
-        )
+        def _run_expand() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+            return expand_sources(
+                article,
+                url,
+                named_entities=list(receipt_payload.get("named_entities") or []),
+                article_topic=receipt_payload.get("article_topic"),
+                max_sources=12,
+            )
+
+        extra_sources, coverage_full = await asyncio.to_thread(_run_expand)
+        coverage_context = format_coverage_for_prompt(coverage_full)
+        receipt_payload["coverage_result"] = coverage_result_for_receipt(coverage_full)
+        receipt_payload["source_provenance"] = {
+            "coverage_adapter": coverage_full["source_adapter"],
+            "gdelt_stage": coverage_full["gdelt_stage"],
+            "query_terms_used": coverage_full["query_terms"],
+            "coverage_found": coverage_full["coverage_found"],
+            "failure_reason": coverage_full["failure_reason"],
+        }
+        if not coverage_full.get("coverage_found"):
+            receipt_payload["volatility_score"] = None
+            receipt_payload["volatility_score_note"] = (
+                "Insufficient comparative coverage to score divergence"
+            )
+            receipt_payload["irreconcilable_gap"] = None
+            receipt_payload["anchor_positions"] = [
+                {
+                    "label": (article.get("publication") or "").strip() or "Original source",
+                    "url": article.get("url"),
+                    "title": article.get("title"),
+                    "framing": (
+                        "Single-source analysis — only the originating article was available "
+                        "for comparative framing."
+                    ),
+                }
+            ]
+            receipt_payload["what_nobody_is_covering"] = [
+                "Coverage search returned no comparable sources. This may indicate the story is "
+                "very new, very niche, or indexed under different terminology."
+            ]
         if extra_sources:
             existing = list(receipt_payload.get("sources") or [])
             receipt_payload["sources"] = existing + extra_sources
@@ -1466,6 +1504,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
             gp_result = await asyncio.to_thread(
                 run_global_perspectives,
                 narrative_for_gp,
+                coverage_context,
             )
             if gp_result and isinstance(gp_result, dict):
                 signed_payload["global_perspectives"] = gp_result
@@ -1480,6 +1519,21 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         store_receipt(signed_payload)
     except Exception:  # noqa: BLE001
         pass
+    cov_summary = signed_payload.get("coverage_result") or {}
+    sp_fin = signed_payload.get("source_provenance")
+    grounded_fin = bool(
+        isinstance(sp_fin, dict) and sp_fin.get("coverage_found") is True
+    )
+    logging.getLogger(__name__).info(
+        "[ANALYZE] Complete | url=%r | coverage=%s | adapter=%s | gdelt_stage=%s "
+        "| grounded=%s | receipt_id=%s",
+        url,
+        cov_summary.get("coverage_found"),
+        cov_summary.get("source_adapter") or "none",
+        cov_summary.get("gdelt_stage") if cov_summary.get("gdelt_stage") is not None else "-",
+        grounded_fin,
+        signed_payload.get("report_id", signed_payload.get("receipt_id", "-")),
+    )
     return signed_payload
 
 

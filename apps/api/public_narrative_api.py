@@ -7,11 +7,14 @@ are framing the same story — with divergence points and what nobody is saying.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 MEDIA_ECOSYSTEMS = [
     {
@@ -57,6 +60,8 @@ MEDIA_ECOSYSTEMS = [
 ]
 
 GLOBAL_PERSPECTIVES_PROMPT = """You are a global media framing analyst for a public record verification system.
+
+__COVERAGE_BLOCK__
 
 Given a narrative or claim, analyze how different regional media ecosystems are framing this story.
 
@@ -105,7 +110,7 @@ Narrative to analyze:
 __NARRATIVE__"""
 
 
-def run_global_perspectives(narrative: str) -> dict[str, Any]:
+def run_global_perspectives(narrative: str, coverage_context: str = "") -> dict[str, Any]:
     """
     Use Claude to analyze how this narrative is being framed
     across regional media ecosystems worldwide.
@@ -129,11 +134,26 @@ def run_global_perspectives(narrative: str) -> dict[str, Any]:
         [{"id": e["id"], "label": e["label"], "outlets": e["outlets"]} for e in MEDIA_ECOSYSTEMS],
         indent=2,
     )
-    prompt = (
-        GLOBAL_PERSPECTIVES_PROMPT.replace("__ECOSYSTEMS_JSON__", ecosystems_json).replace(
-            "__NARRATIVE__",
-            text[:4000],
+    cc = (coverage_context or "").strip()
+    grounded = bool(cc)
+    logger.info("[PERSPECTIVES] grounded=%s", grounded)
+    if cc:
+        coverage_block = (
+            "The following sources were retrieved and verified to cover this story. "
+            "Use these as the factual basis for identifying which outlets are on each side. "
+            "Do not invent outlets or attribute positions to sources not listed here.\n\n"
+            + cc
         )
+    else:
+        coverage_block = (
+            "No comparative coverage was retrieved for this story. "
+            "Base the analysis only on the original article. "
+            "Do not fabricate outlet names or positions."
+        )
+    prompt = (
+        GLOBAL_PERSPECTIVES_PROMPT.replace("__COVERAGE_BLOCK__", coverage_block)
+        .replace("__ECOSYSTEMS_JSON__", ecosystems_json)
+        .replace("__NARRATIVE__", text[:4000])
     )
 
     try:

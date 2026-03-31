@@ -58,6 +58,22 @@ def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
         "extraction_error": body.get("extraction_error"),
         "generated_at": generated_at,
     }
+    sp = body.get("source_provenance")
+    if isinstance(sp, dict):
+        signing_body["source_provenance"] = sp
+    signing_body["perspectives_grounded"] = bool(isinstance(sp, dict) and sp.get("coverage_found"))
+    cov = body.get("coverage_result")
+    if isinstance(cov, dict):
+        signing_body["coverage_result"] = cov
+    for k in (
+        "volatility_score",
+        "volatility_score_note",
+        "irreconcilable_gap",
+        "anchor_positions",
+        "what_nobody_is_covering",
+    ):
+        if k in body:
+            signing_body[k] = body[k]
     src = body.get("sources")
     if isinstance(src, list) and len(src) > 0:
         signing_body["sources"] = src

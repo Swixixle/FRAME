@@ -38,6 +38,7 @@ def search_gdelt(
     max_records: int = 25,
     mode: str = "artlist",
     timespan: str | None = None,
+    log_empty: bool = True,
 ) -> list[dict[str, Any]]:
     params: dict[str, str] = {
         "query": query,
@@ -67,14 +68,20 @@ def search_gdelt(
         )
         resp.raise_for_status()
         data = resp.json()
-    except (httpx.TimeoutException, httpx.HTTPError, ValueError):
+    except (httpx.TimeoutException, httpx.HTTPError, ValueError) as exc:
+        if isinstance(exc, httpx.TimeoutException):
+            logging.warning(
+                "[GDELT] TIMEOUT | query=%r | timespan=%s",
+                query,
+                timespan or "",
+            )
         return []
 
     articles = data.get("articles") or data.get("article") or []
     if not isinstance(articles, list):
         articles = []
 
-    if not articles:
+    if not articles and log_empty:
         logging.warning("GDELT returned 0 articles. URL: %s", getattr(resp, "url", ""))
 
     results: list[dict[str, Any]] = []

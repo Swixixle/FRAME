@@ -1,0 +1,10 @@
+**/node_modules
+.git
+**/__pycache__
+**/.pytest_cache
+**/dist
+**/.env
+**/.venv
+apps/web/node_modules
+terminals
+.cursor

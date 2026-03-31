@@ -25,6 +25,9 @@ export default function Header() {
             {t.label}
           </Link>
         ))}
+        <a href="/verify" className="pe-header-tab" style={{ marginLeft: 8 }}>
+          Verify
+        </a>
       </nav>
     </header>
   );
