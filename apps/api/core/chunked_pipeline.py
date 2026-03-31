@@ -189,6 +189,107 @@ def deduplicate_claims(chunk_results: list[ChunkResult]) -> list[dict[str, Any]]
     return kept
 
 
+async def semantic_deduplicate_claims(
+    claims: list[dict[str, Any]],
+    episode_title: str = "",
+) -> list[dict[str, Any]]:
+    """
+    Pass 2 semantic dedup: merge claims that assert the same fact differently.
+
+    Only runs when there are >10 claims (below that, exact dedup is enough).
+    Returns the original list unchanged if API call fails.
+    """
+    if len(claims) <= 10:
+        return claims
+
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return claims
+
+    sonnet = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-4-20250514")
+
+    compact = [
+        {
+            "id": i,
+            "text": str(c.get("text", ""))[:300],
+            "type": c.get("type", "general"),
+            "chunks": c.get("source_chunks", []),
+            "risk": c.get("implication_risk", "low"),
+        }
+        for i, c in enumerate(claims)
+    ]
+
+    prompt = f"""You are deduplicating factual claims extracted from a podcast episode.
+Episode: {episode_title or "unknown"}
+Total claims: {len(compact)}
+
+Claims (JSON):
+{json.dumps(compact, ensure_ascii=False)}
+
+Task:
+- Identify groups of claims that assert the same underlying fact,
+  even if worded differently.
+- For each group, keep the most specific and complete version.
+- Flag any claims that directly contradict each other with
+  "contradiction": true on the kept claim.
+- Do NOT merge claims that are related but distinct (e.g., two
+  different financial figures about the same entity).
+- Preserve all claims that are unique.
+
+Return ONLY a JSON array of claim IDs to keep (from the "id" field above).
+Example: [0, 2, 5, 7, 11]
+No markdown. No explanation. Just the array.
+"""
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=key)
+        msg = await client.messages.create(
+            model=sonnet,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(
+            getattr(b, "text", "") or ""
+            for b in msg.content
+            if getattr(b, "text", None) is not None
+        ).strip()
+
+        if text.startswith("```"):
+            parts = text.split("```")
+            if len(parts) >= 2:
+                text = parts[1]
+                if text.startswith("json"):
+                    text = text[4:]
+        text = text.strip()
+
+        keep_ids = json.loads(text)
+        if not isinstance(keep_ids, list):
+            return claims
+
+        keep_set: set[int] = set()
+        for i in keep_ids:
+            if isinstance(i, bool):
+                continue
+            if isinstance(i, int):
+                keep_set.add(i)
+            elif isinstance(i, float) and i == int(i):
+                keep_set.add(int(i))
+
+        result = [c for j, c in enumerate(claims) if j in keep_set]
+
+        logger.info(
+            "semantic_deduplicate_claims: %d → %d claims (removed %d)",
+            len(claims),
+            len(result),
+            len(claims) - len(result),
+        )
+        return result if result else claims
+
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("semantic_deduplicate_claims failed: %s", exc)
+        return claims
+
+
 async def coordinate_entities(chunk_results: list[ChunkResult]) -> list[CanonicalEntity]:
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key or not chunk_results:
@@ -324,6 +425,7 @@ async def process_chunked_audio(
     )
 
     unified_claims = deduplicate_claims(chunk_results)
+    unified_claims = await semantic_deduplicate_claims(unified_claims, precontext)
     canonical_entities = await coordinate_entities(chunk_results)
 
     for chunk_path in chunks:

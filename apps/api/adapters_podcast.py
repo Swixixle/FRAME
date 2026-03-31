@@ -538,7 +538,7 @@ If no factual claims: {{"claims": []}}.
 
     msg = client.messages.create(
         model="claude-sonnet-4-20250514",
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
     block = msg.content[0]
@@ -610,7 +610,8 @@ If no factual claims: {{"claims": []}}.
                 "primary_sources": clean_ps,
             }
         )
-    return out[:15]
+    cap = 40 if chunk_index is not None else 15
+    return out[:cap]
 
 
 def save_uploaded_audio(data: bytes, filename: str) -> dict[str, Any]:
@@ -722,6 +723,120 @@ def generate_layer_zero(
         }
 
 
+def generate_synthesis(
+    claims: list,
+    episode_title: str,
+    subject_context: str,
+    *,
+    max_findings: int = 5,
+) -> dict:
+    """
+    Pass 3: synthesis over the deduplicated claim set (chunked episodes).
+
+    Produces top_findings, episode_summary, dominant_entity, contradiction_flags.
+    """
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not key or not claims:
+        return {
+            "top_findings": [],
+            "episode_summary": "",
+            "dominant_entity": "",
+            "contradiction_flags": [],
+            "operational_unknown": "Synthesis requires ANTHROPIC_API_KEY and claims.",
+        }
+
+    import anthropic as _ant
+
+    sorted_claims = sorted(claims, key=_salience_score, reverse=True)[:40]
+    claim_payload = [
+        {
+            "text": str(c.get("text", ""))[:300],
+            "type": c.get("type", "general"),
+            "entities": (c.get("entities") or [])[:5],
+            "risk": c.get("implication_risk", "low"),
+            "speaker": c.get("speaker", "unknown"),
+        }
+        for c in sorted_claims
+        if isinstance(c, dict)
+    ]
+
+    model_name = os.environ.get("CLAUDE_SONNET_MODEL", "claude-sonnet-4-20250514")
+    client = _ant.Anthropic(api_key=key)
+
+    prompt = f"""You are producing a synthesis receipt for a podcast episode.
+
+Episode: {episode_title}
+Context: {subject_context}
+Total claims extracted: {len(claims)}
+Top claims by salience (JSON):
+{json.dumps(claim_payload, ensure_ascii=False)}
+
+Produce a synthesis with these exact fields:
+
+top_findings: A list of {max_findings} or fewer findings.
+Each finding is a neutral declarative sentence, 20 words max.
+No motive language. No verdict language. No evaluative adjectives.
+Only what the record shows. Each must have:
+  - text: the finding sentence
+  - type: the claim type (from the input)
+  - entities: list of entity names involved
+
+episode_summary: One paragraph (3-5 sentences) summarizing what
+was discussed and what the record shows. No verdict. No conclusions
+beyond what the claims establish. Passive voice where possible.
+
+dominant_entity: The single person or organization most central
+to this episode's factual record. Just the name.
+
+contradiction_flags: List of pairs where two claims directly
+contradict each other. Each pair is {{
+  "claim_a": "text of first claim",
+  "claim_b": "text of second claim",
+  "note": "what specifically contradicts"
+}}. Empty list if none found.
+
+Return ONLY valid JSON with these four keys. No markdown.
+
+{{
+  "top_findings": [...],
+  "episode_summary": "...",
+  "dominant_entity": "...",
+  "contradiction_flags": [...]
+}}"""
+
+    try:
+        response = client.messages.create(
+            model=model_name,
+            max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = ""
+        for block in response.content:
+            if hasattr(block, "text") and block.text:
+                raw += block.text
+        raw = raw.strip()
+        if raw.startswith("```"):
+            parts = raw.split("```")
+            if len(parts) >= 2:
+                raw = parts[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+        data = json.loads(raw.strip())
+        if not isinstance(data, dict):
+            raise ValueError("synthesis JSON not an object")
+        data["generated_by"] = model_name
+        data["generated_at"] = _now_iso()
+        return data
+    except Exception as exc:
+        return {
+            "top_findings": [],
+            "episode_summary": "",
+            "dominant_entity": "",
+            "contradiction_flags": [],
+            "operational_unknown": f"Synthesis failed: {str(exc)[:200]}",
+        }
+
+
 def assemble_podcast_payload(
     audio_info: dict,
     transcription: dict,
@@ -735,6 +850,7 @@ def assemble_podcast_payload(
     canonical_entities_chunked: list[dict] | None = None,
     content_source: str = "audio",
     article_source_record: dict[str, Any] | None = None,
+    synthesis: dict | None = None,
 ) -> dict:
     """
     Assemble the full FrameReceiptPayload dict from all pipeline stages.
@@ -899,6 +1015,16 @@ def assemble_podcast_payload(
             "generated_by": layer_zero.get("generated_by", ""),
             "generation_timestamp": layer_zero.get("generation_timestamp", now),
             "source_claim_id": layer_zero.get("source_claim_id"),
+        }
+
+    if synthesis and synthesis.get("top_findings"):
+        payload["synthesis"] = {
+            "top_findings": synthesis.get("top_findings", []),
+            "episode_summary": synthesis.get("episode_summary", ""),
+            "dominant_entity": synthesis.get("dominant_entity", ""),
+            "contradiction_flags": synthesis.get("contradiction_flags", []),
+            "generated_by": synthesis.get("generated_by", ""),
+            "generated_at": synthesis.get("generated_at", ""),
         }
 
     return payload

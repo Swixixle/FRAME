@@ -57,6 +57,7 @@ from adapters_podcast import (
     download_audio,
     extract_speaker_claims,
     generate_layer_zero,
+    generate_synthesis,
     probe_audio_duration_seconds,
     save_uploaded_audio,
     transcribe_audio,
@@ -3513,17 +3514,63 @@ async def dark_money_trace(candidate_id: str, name: str = "") -> dict[str, Any]:
         ) from exc
 
 
+def _resolve_podcast_dossier_payload(receipt_id: str) -> dict[str, Any] | None:
+    """
+    Podcast jobs persist signed JSON to SQLite (`receipts`); some flows use Postgres
+    (`frame_receipts`) or only hold the receipt on the in-memory job.
+    """
+    rid = (receipt_id or "").strip()
+    if not rid:
+        return None
+    try:
+        payload = load_stored_receipt(rid)
+        if payload:
+            return payload
+    except Exception:  # noqa: BLE001 — missing DATABASE_URL or DB error
+        pass
+    job_payload = find_receipt_by_receipt_id(rid)
+    if job_payload:
+        return job_payload
+    with _db_lock:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT payload FROM receipts WHERE id = ?",
+                (rid,),
+            ).fetchone()
+            if row:
+                return json.loads(row["payload"])
+        finally:
+            conn.close()
+    return None
+
+
 @app.get("/v1/podcast-receipt/{receipt_id}/dossier")
 async def get_podcast_dossier(receipt_id: str) -> dict[str, Any]:
     """
-    Retrieve the dossier assembled for a podcast receipt.
-    Returns dossiers for all entities found in that receipt.
+    Retrieve claims, layer zero, synthesis, and meta for a stored podcast receipt.
+    For per-entity Stage-3 dossiers, use /dossier/{entity_name}.
     """
+    rid = receipt_id.strip()
+    payload = await asyncio.to_thread(_resolve_podcast_dossier_payload, rid)
+    if not payload:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Receipt '{rid}' not found",
+        )
+    layer_zero = payload.get("layer_zero") or payload.get("layerZero")
     return {
-        "receipt_id": receipt_id,
+        "receipt_id": rid,
+        "claims": payload.get("claims", []),
+        "layer_zero": layer_zero,
+        "synthesis": payload.get("synthesis"),
+        "sources": payload.get("sources", []),
+        "unknowns": payload.get("unknowns", {}),
+        "meta": payload.get("meta", {}),
         "note": (
-            "Use /v1/podcast-receipt/{receipt_id}/dossier/{entity_name} "
-            "to retrieve a specific entity dossier"
+            "For a specific entity dossier (Stage 3), use "
+            f"/v1/podcast-receipt/{rid}/dossier/{{entity_name}}"
         ),
     }
 
@@ -4737,6 +4784,19 @@ async def podcast_investigate(
                     request.subject_context or "public figure",
                 )
             update_job(job, stream_layer_zero=layer_zero)
+            synthesis: dict[str, Any] = {}
+            _chunks_n = (
+                chunked_meta.get("chunks_processed") if chunked_meta else None
+            )
+            if _chunks_n and _chunks_n > 1 and claims:
+                ep_title = audio_info.get("title", "") or ""
+                subj = request.subject_context or ep_title or ""
+                synthesis = await asyncio.to_thread(
+                    generate_synthesis,
+                    claims,
+                    ep_title,
+                    subj,
+                )
             payload = assemble_podcast_payload(
                 audio_info=audio_info,
                 transcription=transcription,
@@ -4749,6 +4809,7 @@ async def podcast_investigate(
                 canonical_entities_chunked=chunked_meta.get("canonical_entities")
                 if chunked_meta
                 else None,
+                synthesis=synthesis if synthesis.get("top_findings") else None,
             )
             update_job(job, stage="dossier")
             # Stage 2 — adapter dispatch
@@ -4996,6 +5057,19 @@ async def podcast_investigate_upload(
                     subject_context or "public figure",
                 )
             update_job(job, stream_layer_zero=layer_zero)
+            synthesis_up: dict[str, Any] = {}
+            _chunks_up = (
+                chunked_meta.get("chunks_processed") if chunked_meta else None
+            )
+            if _chunks_up and _chunks_up > 1 and claims:
+                ep_title = audio_info.get("title", "") or ""
+                subj_u = subject_context or ep_title or ""
+                synthesis_up = await asyncio.to_thread(
+                    generate_synthesis,
+                    claims,
+                    ep_title,
+                    subj_u,
+                )
             payload = assemble_podcast_payload(
                 audio_info=audio_info,
                 transcription=transcription,
@@ -5008,6 +5082,7 @@ async def podcast_investigate_upload(
                 canonical_entities_chunked=chunked_meta.get("canonical_entities")
                 if chunked_meta
                 else None,
+                synthesis=synthesis_up if synthesis_up.get("top_findings") else None,
             )
             update_job(job, stage="dossier")
             # Stage 2 — adapter dispatch
