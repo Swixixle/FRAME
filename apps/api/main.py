@@ -4690,6 +4690,7 @@ async def podcast_investigate(
             update_job(job, stage="resolving")
             resolution = await resolve_url(src)
             prov_acc: dict[str, Any] = dict(resolution.get("provenance") or {})
+            job.content_provenance = format_content_provenance(prov_acc)
 
             if resolution.get("error") and not resolution.get("requires_download"):
                 mark_failed(job, str(resolution["error"]))

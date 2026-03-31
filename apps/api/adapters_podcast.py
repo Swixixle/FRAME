@@ -969,6 +969,8 @@ def assemble_podcast_payload(
                 trans_note = (
                     "Transcript from YouTube captions (timedtext; no primary audio download). "
                 )
+            elif provider == "supadata_transcript":
+                trans_note = "Transcript via Supadata API (YouTube). "
             elif provider == "publisher_transcript":
                 trans_note = "Transcript taken from the publisher web page (URL resolver). "
             elif provider == "podcast_index_mp3":

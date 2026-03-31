@@ -248,74 +248,100 @@ async def verify_provenance(classification: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# YouTube timedtext
+# YouTube timedtext (direct API — no watch page)
 # ---------------------------------------------------------------------------
 
-def _parse_caption_base_url(html: str, video_id: str) -> str | None:
-    m = re.search(
-        r'"baseUrl"\s*:\s*"(https://www\.youtube\.com/api/timedtext[^"]+)"',
-        html,
-    )
-    if m:
-        return m.group(1).replace("\\u0026", "&")
-    idx = html.find('"captionTracks"')
-    if idx != -1:
-        chunk = html[idx : idx + 8000]
-        m2 = re.search(
-            r'https://www\.youtube\.com/api/timedtext[^"\\]+',
-            chunk,
-        )
-        if m2:
-            return m2.group(0).replace("\\u0026", "&")
-    return None
+_DIRECT_TT_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+)
 
 
 async def _youtube_timedtext(video_id: str) -> dict[str, Any] | None:
+    """
+    Fetch YouTube captions via direct timedtext API (fmt=json3).
+    Does not fetch the watch page (avoids HTML/429 on watch?v= from datacenter IPs).
+    """
     try:
-        async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+            for lang in ("en", "en-US", "en-GB"):
+                url = (
+                    f"https://www.youtube.com/api/timedtext"
+                    f"?v={video_id}&lang={lang}&fmt=json3"
+                )
+                r = await client.get(
+                    url,
+                    headers={
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "User-Agent": _DIRECT_TT_UA,
+                    },
+                )
+                if r.status_code != 200 or not r.content:
+                    continue
+                try:
+                    data = r.json()
+                except json.JSONDecodeError:
+                    continue
+                events = data.get("events") or []
+                parts: list[str] = []
+                for e in events:
+                    if not isinstance(e, dict):
+                        continue
+                    for seg in e.get("segs") or []:
+                        if not isinstance(seg, dict):
+                            continue
+                        t = str(seg.get("utf8", "")).strip()
+                        if t and t != "\n":
+                            parts.append(t)
+                full_text = " ".join(parts)
+                if len(full_text) > 100:
+                    return {
+                        "full_text": full_text,
+                        "segments": [],
+                        "source_url": url[:2000],
+                        "language": lang,
+                        "duration": 0.0,
+                    }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("YouTube timedtext direct failed: %s", exc)
+    return None
+
+
+async def _supadata_transcript(video_id: str) -> dict[str, Any] | None:
+    """
+    Supadata.ai YouTube transcripts (optional; avoids datacenter IP issues with YouTube).
+    """
+    api_key = os.environ.get("SUPADATA_API_KEY", "").strip()
+    if not api_key:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             r = await client.get(
-                f"https://www.youtube.com/watch?v={video_id}",
-                headers={"User-Agent": _YT_UA, "Accept-Language": "en-US,en;q=0.9"},
+                "https://api.supadata.ai/v1/youtube/transcript",
+                params={"videoId": video_id, "lang": "en"},
+                headers={"x-api-key": api_key},
             )
             if r.status_code != 200:
                 return None
-            base = _parse_caption_base_url(r.text, video_id)
-            if not base:
-                try_url = (
-                    f"https://www.youtube.com/api/timedtext?v={video_id}&lang=en&fmt=srv3"
+            data = r.json()
+            content = data.get("content", [])
+            if isinstance(content, list):
+                full_text = " ".join(
+                    str(seg.get("text", "")).strip()
+                    for seg in content
+                    if isinstance(seg, dict) and seg.get("text")
                 )
-                tr = await client.get(try_url, headers={"User-Agent": _YT_UA})
-                if tr.status_code != 200 or len(tr.text) <= 80:
-                    return None
-                cap_text = re.sub(r"<[^>]+>", " ", tr.text)
-                cap_text = re.sub(r"\s+", " ", cap_text).strip()
-                if len(cap_text) < 100:
-                    return None
+            else:
+                full_text = str(data.get("text") or data.get("transcript") or "").strip()
+            if len(full_text) > 100:
                 return {
-                    "full_text": cap_text,
-                    "segments": [],
-                    "source_url": try_url[:2000],
+                    "full_text": full_text,
+                    "segments": content if isinstance(content, list) else [],
+                    "source_url": f"https://supadata.ai/youtube/{video_id}",
                     "language": "en",
                     "duration": 0.0,
                 }
-            sep = "&" if "?" in base else "?"
-            caption_url = base if "fmt=" in base else f"{base}{sep}fmt=srv3"
-            cr = await client.get(caption_url, headers={"User-Agent": _YT_UA})
-            if cr.status_code != 200:
-                return None
-            full_text = re.sub(r"<[^>]+>", " ", cr.text)
-            full_text = re.sub(r"\s+", " ", full_text).strip()
-            if len(full_text) < 100:
-                return None
-            return {
-                "full_text": full_text,
-                "segments": [],
-                "source_url": caption_url[:2000],
-                "language": "en",
-                "duration": 0.0,
-            }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("YouTube timedtext failed: %s", exc)
+        logger.warning("Supadata transcript failed: %s", exc)
     return None
 
 
@@ -478,6 +504,15 @@ async def fetch_transcript(
             result["source"] = "youtube_timedtext"
             return {"transcript": result, "error": None}
         path.append("youtube_timedtext_failed")
+
+        sup = await _supadata_transcript(video_id)
+        if sup:
+            path.append("supadata_transcript")
+            provenance["resolution_path"] = list(path)
+            sup["source"] = "supadata_transcript"
+            return {"transcript": sup, "error": None}
+        if os.environ.get("SUPADATA_API_KEY", "").strip():
+            path.append("supadata_transcript_failed")
 
         title = provenance.get("content_title") or ""
         publisher = provenance.get("publisher") or ""

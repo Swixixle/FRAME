@@ -41,6 +41,8 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: SUPADATA_API_KEY
+        sync: false
       - key: ASSEMBLYAI_API_KEY
         sync: false
       - key: FEC_API_KEY

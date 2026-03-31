@@ -33,9 +33,11 @@ class Job:
         self.stream_claims: list[dict[str, Any]] = []
         self.stream_entities: list[dict[str, str]] = []
         self.stream_layer_zero: Optional[dict[str, Any]] = None
+        # URL resolver / provenance (set early so polling survives downstream failure)
+        self.content_provenance: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict:
-        return {
+        d: dict[str, Any] = {
             "job_id": self.job_id,
             "status": self.status,
             "description": self.description,
@@ -48,6 +50,9 @@ class Job:
             "processing_time_ms": self.processing_time_ms,
             "stage": self.stage,
         }
+        if self.content_provenance is not None:
+            d["content_provenance"] = self.content_provenance
+        return d
 
 
 _jobs: dict[str, Job] = {}
