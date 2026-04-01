@@ -553,6 +553,53 @@ def list_receipts_with_coalition_since(
         conn.close()
 
 
+def list_recent_article_investigations(
+    limit: int = 24,
+) -> list[dict[str, Any]]:
+    """
+    Most recent article analyses (investigation receipts), newest first.
+    Each item: receipt_id, created_at, receipt (full payload), coalition (dict or {}).
+    Coalition is joined when a coalition_map row exists.
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT f.id, f.created_at, f.payload AS receipt_payload,
+                       c.payload AS coalition_payload
+                FROM frame_receipts f
+                LEFT JOIN coalition_maps c ON c.receipt_id = f.id
+                WHERE f.receipt_type = 'article_analysis'
+                ORDER BY f.created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            out: list[dict[str, Any]] = []
+            for row in cur.fetchall():
+                rp = row["receipt_payload"]
+                cp = row.get("coalition_payload")
+                if isinstance(rp, str):
+                    rp = json.loads(rp)
+                if isinstance(cp, str):
+                    cp = json.loads(cp)
+                if not isinstance(rp, dict):
+                    continue
+                coalition: dict[str, Any] = dict(cp) if isinstance(cp, dict) else {}
+                out.append(
+                    {
+                        "receipt_id": str(row["id"]),
+                        "created_at": row["created_at"],
+                        "receipt": rp,
+                        "coalition": coalition,
+                    }
+                )
+            return out
+    finally:
+        conn.close()
+
+
 def list_recent_receipts(limit: int = 20) -> list[dict[str, Any]]:
     """List recent receipts for a feed/history view (metadata only)."""
     conn = _get_conn()
