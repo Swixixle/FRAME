@@ -8,7 +8,8 @@
 
 → **[Try it now](https://frame-2yxu.onrender.com)**  
 → **[Example investigation](https://frame-2yxu.onrender.com/i/8449d4ca-9b30-4ef5-90e5-a9ada6635e91)**  
-→ **[Verify any receipt](https://frame-2yxu.onrender.com/verify)**
+→ **[Verify any receipt](https://frame-2yxu.onrender.com/verify)**  
+→ **[Master architecture (engineers)](docs/MASTER_ARCHITECTURE.md)** — monorepo, signing slice, article pipeline, onboarding
 
 ---
 

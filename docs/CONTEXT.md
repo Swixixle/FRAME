@@ -37,7 +37,8 @@ This is the thing that makes Frame not Wikipedia, not Snopes, not PolitiFact. Th
 **Before touching any code in a new session:**
 1. `curl -sS https://frame-2yxu.onrender.com/health` — confirm 200
 2. `cd ~/FRAME && git pull`
-3. Read this file, `docs/HANDOFF_SESSION.md` (last milestone), and `docs/RABBIT_HOLE_CONTEXT.md` in full
+3. Read **`docs/MASTER_ARCHITECTURE.md`** (full stack, article pipeline, signing rule: fields not in the signing body are not cryptographically attested)
+4. Read this file, `docs/HANDOFF_SESSION.md` (last milestone), and `docs/RABBIT_HOLE_CONTEXT.md` in full
 
 ---
 
