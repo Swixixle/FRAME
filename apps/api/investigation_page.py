@@ -714,8 +714,10 @@ def _global_perspectives_section_html(gp: dict[str, Any]) -> str:
     claim_one = str(gp.get("claim", "") or "").strip()
     conf_note = str(gp.get("confidence_note", "") or "").strip()
 
-    has_any = bool(ecosystems) or bool(div_pts) or bool(absent) or bool(consensus) or bool(claim_one)
-    if not has_any:
+    # `absent_from_all` is rendered only in _absent_from_all_section_html; do not count it here
+    # or we emit an empty "Global perspectives" shell when absent is the sole GP signal.
+    has_main = bool(ecosystems) or bool(div_pts) or bool(consensus) or bool(claim_one) or bool(conf_note)
+    if not has_main and not absent:
         return (
             '<div class="inv-reader-soft" style="margin-bottom:32px">'
             '<div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;'
@@ -724,6 +726,8 @@ def _global_perspectives_section_html(gp: dict[str, Any]) -> str:
             "Global perspective mapping is running — check back shortly."
             "</div></div>"
         )
+    if not has_main and absent:
+        return ""
 
     parts: list[str] = []
     if claim_one:
