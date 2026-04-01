@@ -268,5 +268,163 @@ def run_global_perspectives(narrative: str, coverage_context: str = "") -> dict[
         }
 
 
+def generate_contextual_brief(
+    article_topic: str,
+    article_title: str,
+    named_entities: list[str],
+    coverage_context: str = "",
+) -> dict[str, Any]:
+    """
+    Epistemics-disciplined contextual brief: FACT / INFERRED / contradiction separation.
+    Call via asyncio.to_thread.
+    """
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return {}
+
+    entities_str = ", ".join(named_entities[:10]) if named_entities else "none"
+    cc = (coverage_context or "").strip()
+    coverage_block = f"\nRelated coverage context:\n{cc}\n" if cc else ""
+
+    prompt = f"""You are a rigorous senior analyst briefing an investigative journalist.
+
+Hard rules:
+- Every typed datum uses exactly one of: FACT, INFERRED, or (for contradictions) plain Claim vs Record — never fuse FACT and INFERRED in the same sentence.
+- stakes must be FACT-only sentences (documentable consequences if the claim were true). Put interpretations only in impact_signals rows marked INFERRED.
+- Never invent sources, quotes, or statistics. Omit rather than fabricate.
+
+HEADLINE: {article_title}
+STORY: {article_topic}
+KEY ENTITIES: {entities_str}
+{coverage_block}
+
+Return this exact JSON structure. JSON only — no markdown, no text outside the JSON.
+
+{{
+  "claim_type": "EVENT" | "STATEMENT" | "PREDICTION" | "ALLEGATION" | "POLICY",
+
+  "why_it_matters": {{
+    "stakes": "1-2 sentences, FACT only — immediate consequences if the core claim were true.",
+    "impact_signals": [
+      {{
+        "signal": "one observable datapoint only (e.g. price move) — no interpretation mixed in",
+        "source": "named publication or data source",
+        "timestamp": "date or recent",
+        "type": "FACT" | "INFERRED"
+      }}
+    ],
+    "urgency": "immediate" | "days" | "weeks" | "long-term"
+  }},
+
+  "historical_precedent": {{
+    "case": "specific named event",
+    "date": "year or period",
+    "trigger": "what caused it — 1 sentence, FACT",
+    "escalation_pattern": "how it developed — 1 sentence",
+    "resolution_mechanism": "what ended it — 1 sentence",
+    "resolution_timeline": "how long it took",
+    "delta": {{
+      "military_posture": "difference vs now",
+      "actor_alignment": "difference vs now",
+      "information_environment": "difference vs now"
+    }},
+    "breakpoint": "where the analogy fails — most important difference",
+    "confidence": "high" | "medium" | "low"
+  }},
+
+  "downstream_implications": {{
+    "expected": [
+      {{
+        "domain": "energy" | "markets" | "military" | "humanitarian" | "legal" | "policy" | "elections" | "public health",
+        "if_claim_holds": "one sentence — must match the row type field",
+        "direction": "positive" | "negative" | "uncertain",
+        "timeframe": "immediate" | "30 days" | "6 months" | "long-term",
+        "type": "FACT" | "INFERRED"
+      }}
+    ],
+    "observed": [
+      {{
+        "domain": "string",
+        "current_reality": "what is happening now",
+        "source": "named source",
+        "type": "FACT"
+      }}
+    ],
+    "contradictions": [
+      {{
+        "claim": "what the article or speaker claims",
+        "reality": "what the observable record shows",
+        "significance": "why the gap matters"
+      }}
+    ]
+  }},
+
+  "analyst_signals": [
+    {{
+      "source": "real named institution or analyst",
+      "model_type": "market analysis" | "policy analysis" | "economic model" | "military assessment" | "legal analysis",
+      "signal": "paraphrase only — no fabricated quotes",
+      "date": "date or recent",
+      "url": "direct https URL if known, else empty string",
+      "confidence": "PRIMARY" | "SECONDARY" | "INFERRED",
+      "excerpt_note": "document or report reference if known, else empty"
+    }}
+  ],
+
+  "comparable_moment": {{
+    "headline": "newspaper-style headline for the historical moment",
+    "then": {{
+      "trigger": "what started it",
+      "dynamics": "how it played out",
+      "timeline": "how long"
+    }},
+    "now": {{
+      "current_signals": "observable today",
+      "actor_alignment": "who controls what"
+    }},
+    "pattern": "repeating dynamic — 1 sentence",
+    "breakpoint": "mandatory — where this analogy breaks down"
+  }},
+
+  "investigative_hooks": {{
+    "next_questions": [
+      "specific unanswered question for a journalist"
+    ],
+    "next_actions": [
+      {{
+        "action": "specific step",
+        "where": "named database or method (e.g. CourtListener, GDELT, AIS shipping data, OpenSecrets)",
+        "why": "what this would reveal"
+      }}
+    ]
+  }}
+}}
+
+Rules:
+- impact_signals: real datapoints with sources; omit if not citable.
+- contradictions: only genuine observable conflicts; omit if none.
+- breakpoint fields in historical_precedent and comparable_moment are mandatory when those objects are non-empty.
+- next_actions: name specific systems (not vague "check sources").
+- Empty arrays/objects when no confident content.
+- JSON only."""
+
+    client = anthropic.Anthropic(api_key=key)
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = message.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+        result = json.loads(raw.strip())
+        return result if isinstance(result, dict) else {}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[CONTEXT_BRIEF] %s", e)
+        return {}
+
+
 # Keep backward compat — old endpoint used run_public_narrative
 run_public_narrative = run_global_perspectives

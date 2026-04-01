@@ -95,7 +95,7 @@ from actor_ledger_api import (
     validate_actor_slug,
 )
 from pattern_api import get_pattern_lib_payload, run_pattern_match
-from public_narrative_api import run_global_perspectives
+from public_narrative_api import generate_contextual_brief, run_global_perspectives
 from query_engine import run_query
 from query_synthesizer import synthesize_articles, synthesize_timeline
 from spread_api import run_spread
@@ -2254,6 +2254,24 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
                 "global_perspectives failed in analyze_article: %s",
                 _gp_err,
             )
+    topic_for_brief = narrative_for_gp or str(
+        (receipt_payload.get("article") or {}).get("title") or ""
+    ).strip()
+    if topic_for_brief:
+        try:
+            cb_result = await asyncio.to_thread(
+                generate_contextual_brief,
+                topic_for_brief,
+                str((receipt_payload.get("article") or {}).get("title") or ""),
+                list(receipt_payload.get("named_entities") or []),
+                coverage_context,
+            )
+            if isinstance(cb_result, dict) and cb_result:
+                receipt_payload["contextual_brief"] = cb_result
+                logger.info("[CONTEXT_BRIEF] Generated successfully")
+        except Exception as _cb_err:  # noqa: BLE001
+            logger.warning("[CONTEXT_BRIEF] Failed: %s", _cb_err)
+
     signed_payload = attach_article_analysis_signing(receipt_payload)
     try:
         store_receipt(signed_payload)

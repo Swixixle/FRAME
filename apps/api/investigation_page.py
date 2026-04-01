@@ -1796,6 +1796,452 @@ def _dig_deeper_button_html(receipt_id: str) -> str:
 """
 
 
+def _brief_hook_action_href(where: str, action: str) -> str | None:
+    """Map investigative next_actions.where to a useful URL; optional search query."""
+    q = quote_plus((action or where or "").strip()[:280])
+    combined = f"{(where or '').lower()} {(action or '').lower()}"
+    if "courtlistener" in combined or "court listener" in combined:
+        return f"https://www.courtlistener.com/?q={q}"
+    if "opensecrets" in combined:
+        return f"https://www.opensecrets.org/search?q={q}"
+    if re.search(r"\bfec\b", combined) or "fec.gov" in combined:
+        return f"https://www.fec.gov/data/search/?q={q}"
+    if "congress" in combined or "congressional" in combined:
+        return f"https://www.congress.gov/search?q={q}"
+    if "propublica" in combined:
+        return f"https://www.propublica.org/search?q={q}"
+    if "sec" in combined and ("edgar" in combined or "sec.gov" in combined):
+        return f"https://www.sec.gov/edgar/search/#/q={q}"
+    if "gdelt" in combined:
+        return "https://www.gdeltproject.org/"
+    if "ais" in combined or "marinetraffic" in combined or "marine traffic" in combined:
+        return "https://www.marinetraffic.com/en/ais/home/centerx:45/centery:15/zoom:5"
+    if "shipping" in combined:
+        return "https://www.marinetraffic.com/en/ais/home/centerx:45/centery:15/zoom:5"
+    return None
+
+
+def _summary_section_html(receipt: dict) -> str:
+    """Epistemics-disciplined contextual brief: FACT/INFERRED separation, hooks (signed with receipt)."""
+    topic = str(receipt.get("article_topic") or receipt.get("narrative") or "").strip()
+    if not topic and isinstance(receipt.get("article"), dict):
+        topic = str((receipt.get("article") or {}).get("title") or "").strip()
+    brief = receipt.get("contextual_brief")
+    if not isinstance(brief, dict):
+        brief = {}
+
+    if not brief:
+        if not topic:
+            return ""
+        return (
+            f'<div class="inv-paper-card inv-reader-soft contextual-brief-fallback" '
+            f'style="margin-bottom:32px;padding:18px 22px">'
+            f'<div class="brief-label">SUMMARY</div>'
+            f'<p class="summary-text">{_e(topic[:400])}{"…" if len(topic) > 400 else ""}</p></div>'
+        )
+
+    parts: list[str] = []
+
+    claim_type = str(brief.get("claim_type") or "").strip()
+    claim_type_colors = {
+        "EVENT": ("#1b5e20", "#e8f5e9"),
+        "STATEMENT": ("#0d47a1", "#e3f2fd"),
+        "PREDICTION": ("#e65100", "#fff3e0"),
+        "ALLEGATION": ("#b71c1c", "#ffebee"),
+        "POLICY": ("#4a148c", "#f3e5f5"),
+    }
+    ctc, ctbg = claim_type_colors.get(claim_type, ("#555", "#f5f5f5"))
+    ct_badge = (
+        f'<span class="claim-type-tag" style="color:{ctc};background:{ctbg};">'
+        f"{_e(claim_type)}</span>"
+        if claim_type
+        else ""
+    )
+
+    parts.append(
+        f'<section class="summary-section inv-reader-soft">'
+        f'<div class="brief-label">SUMMARY {ct_badge}</div>'
+        f'<div class="summary-text">{_e(topic[:400])}{"…" if len(topic) > 400 else ""}</div>'
+        f"</section>"
+    )
+
+    why = brief.get("why_it_matters") if isinstance(brief.get("why_it_matters"), dict) else {}
+    if not why and isinstance(brief.get("why_it_matters_now"), dict):
+        _old = brief["why_it_matters_now"]
+        why = {
+            "stakes": _old.get("text") or "",
+            "urgency": _old.get("urgency") or "",
+            "impact_signals": [],
+        }
+    stakes = str(why.get("stakes") or "").strip()
+    impact_sigs = why.get("impact_signals") if isinstance(why.get("impact_signals"), list) else []
+    if stakes or impact_sigs:
+        urgency = str(why.get("urgency") or "").strip().lower()
+        urgency_colors = {
+            "immediate": ("#b71c1c", "#ffebee"),
+            "days": ("#e65100", "#fff3e0"),
+            "weeks": ("#f57f17", "#fffde7"),
+            "long-term": ("#1b5e20", "#e8f5e9"),
+        }
+        uc, ubg = urgency_colors.get(urgency, ("#888", "#f5f5f5"))
+        urgency_badge = ""
+        if urgency:
+            urg_disp = urgency.replace("-", " ").upper()
+            urgency_badge = (
+                f'<span class="urgency-badge" style="color:{uc};background:{ubg};">'
+                f"{_e(urg_disp)}</span>"
+            )
+
+        signals_html = ""
+        for sig in impact_sigs[:6]:
+            if not isinstance(sig, dict):
+                continue
+            stype = str(sig.get("type") or "INFERRED").strip().upper()
+            if stype not in ("FACT", "INFERRED"):
+                stype = "INFERRED"
+            sc = "#2e7d32" if stype == "FACT" else "#e65100"
+            sbg = "#e8f5e9" if stype == "FACT" else "#fff3e0"
+            sig_txt = str(sig.get("signal") or "").strip()
+            if not sig_txt:
+                continue
+            src = str(sig.get("source") or "").strip()
+            ts = str(sig.get("timestamp") or "").strip()
+            attr = ""
+            if src:
+                attr = f" — {_e(src)}"
+                if ts:
+                    attr += f", {_e(ts)}"
+            attr_html = f'<span class="signal-attr">{attr}</span>' if attr else ""
+            signals_html += (
+                f'<div class="impact-signal">'
+                f'<span class="signal-type-tag" style="color:{sc};background:{sbg};">{stype}</span>'
+                f'<span class="impact-signal-text">{_e(sig_txt)}</span>'
+                f"{attr_html}</div>"
+            )
+
+        stakes_html = f'<div class="brief-text">{_e(stakes)}</div>' if stakes else ""
+        sig_block = f'<div class="impact-signals">{signals_html}</div>' if signals_html else ""
+        parts.append(
+            f'<section class="brief-section">'
+            f'<div class="brief-label">WHY IT MATTERS NOW {urgency_badge}</div>'
+            f"{stakes_html}{sig_block}</section>"
+        )
+
+    prec = brief.get("historical_precedent") if isinstance(brief.get("historical_precedent"), dict) else {}
+    case_name = str(prec.get("case") or prec.get("comparable_event") or "").strip()
+    if case_name:
+        conf = str(prec.get("confidence") or "medium").lower()
+        conf_note = (
+            ' <span class="conf-low-note">(low confidence analogy)</span>' if conf == "low" else ""
+        )
+        delta = prec.get("delta") if isinstance(prec.get("delta"), dict) else {}
+        delta_html = ""
+        for key, label in [
+            ("military_posture", "Military posture"),
+            ("actor_alignment", "Actor alignment"),
+            ("information_environment", "Info environment"),
+        ]:
+            dv = str(delta.get(key) or "").strip()
+            if dv:
+                delta_html += (
+                    f'<div class="delta-row">'
+                    f'<span class="delta-label">{_e(label)}</span>'
+                    f'<span class="delta-text">{_e(dv)}</span></div>'
+                )
+
+        bp = str(prec.get("breakpoint") or "").strip()
+        breakpoint_html = (
+            f'<div class="breakpoint-block">'
+            f'<span class="breakpoint-label">WHERE ANALOGY BREAKS DOWN</span>'
+            f'<span class="breakpoint-text">{_e(bp)}</span></div>'
+            if bp
+            else ""
+        )
+
+        dt = prec.get("date") or prec.get("comparable_date")
+        dt_html = f'<span class="precedent-date">· {_e(dt)}</span>' if str(dt or "").strip() else ""
+        trig = str(prec.get("trigger") or "").strip()
+        esc = str(prec.get("escalation_pattern") or "").strip()
+        res_m = str(prec.get("resolution_mechanism") or "").strip()
+        res_t = str(prec.get("resolution_timeline") or "").strip()
+        prec_rows = ""
+        if trig:
+            prec_rows += f'<div class="prec-row"><strong>Trigger:</strong> {_e(trig)}</div>'
+        if esc:
+            prec_rows += f'<div class="prec-row"><strong>Pattern:</strong> {_e(esc)}</div>'
+        if res_m:
+            rt_part = f" ({_e(res_t)})" if res_t else ""
+            prec_rows += (
+                f'<div class="prec-row"><strong>Resolution:</strong> {_e(res_m)}{rt_part}</div>'
+            )
+
+        delta_block = (
+            f'<div class="delta-block"><div class="delta-title">THEN vs NOW</div>{delta_html}</div>'
+            if delta_html
+            else ""
+        )
+
+        parts.append(
+            f'<section class="brief-section brief-precedent">'
+            f'<div class="brief-label">HISTORICAL PRECEDENT{conf_note}</div>'
+            f'<div class="precedent-case">{_e(case_name)}{dt_html}</div>'
+            f'<div class="precedent-rows">{prec_rows}</div>'
+            f"{delta_block}{breakpoint_html}</section>"
+        )
+
+    impl = (
+        brief.get("downstream_implications")
+        if isinstance(brief.get("downstream_implications"), dict)
+        else {}
+    )
+    expected = impl.get("expected") if isinstance(impl.get("expected"), list) else []
+    observed = impl.get("observed") if isinstance(impl.get("observed"), list) else []
+    contradictions = impl.get("contradictions") if isinstance(impl.get("contradictions"), list) else []
+
+    if expected or observed or contradictions:
+        impl_html = ""
+        direction_icons = {"positive": "↑", "negative": "↓", "uncertain": "?"}
+        direction_colors = {"positive": "#2e7d32", "negative": "#c62828", "uncertain": "#888"}
+
+        if expected:
+            impl_html += '<div class="impl-group-label">EXPECTED (if claim holds)</div>'
+            for e in expected[:6]:
+                if not isinstance(e, dict):
+                    continue
+                if_claim = str(e.get("if_claim_holds") or e.get("implication") or "").strip()
+                if not if_claim:
+                    continue
+                direction = str(e.get("direction") or "uncertain").lower()
+                icon = direction_icons.get(direction, "?")
+                color = direction_colors.get(direction, "#888")
+                itype = str(e.get("type") or "INFERRED").strip().upper()
+                if itype not in ("FACT", "INFERRED"):
+                    itype = "INFERRED"
+                itc = "#2e7d32" if itype == "FACT" else "#e65100"
+                itbg = "#e8f5e9" if itype == "FACT" else "#fff3e0"
+                dom = str(e.get("domain") or "").strip().upper()
+                tf = str(e.get("timeframe") or "").strip()
+                tf_html = f'<span class="impl-timeframe">{_e(tf)}</span>' if tf else ""
+                impl_html += (
+                    f'<div class="implication-row">'
+                    f'<span class="impl-direction" style="color:{color};">{icon}</span>'
+                    f'<span class="impl-domain">{_e(dom)}</span>'
+                    f'<span class="impl-text">{_e(if_claim)}</span>'
+                    f'<span class="signal-type-tag impl-type-tag" '
+                    f'style="color:{itc};background:{itbg};">{itype}</span>{tf_html}</div>'
+                )
+
+        if observed:
+            impl_html += (
+                '<div class="impl-group-label" style="margin-top:8px;">OBSERVED (current reality)</div>'
+            )
+            for o in observed[:4]:
+                if not isinstance(o, dict):
+                    continue
+                cr = str(o.get("current_reality") or "").strip()
+                if not cr:
+                    continue
+                src = str(o.get("source") or "").strip()
+                dom_o = str(o.get("domain") or "").strip().upper()
+                src_html = f'<span class="impl-source"> — {_e(src)}</span>' if src else ""
+                impl_html += (
+                    f'<div class="implication-row observed-row">'
+                    f'<span class="impl-direction" style="color:#888;">·</span>'
+                    f'<span class="impl-domain">{_e(dom_o)}</span>'
+                    f'<span class="impl-text">{_e(cr)}{src_html}</span></div>'
+                )
+
+        if contradictions:
+            impl_html += (
+                '<div class="impl-group-label contradiction-label" style="margin-top:8px;">'
+                "⚠ CONTRADICTIONS</div>"
+            )
+            for c in contradictions[:4]:
+                if not isinstance(c, dict):
+                    continue
+                claim = str(c.get("claim") or "").strip()
+                reality = str(c.get("reality") or "").strip()
+                if not claim and not reality:
+                    continue
+                sig = str(c.get("significance") or "").strip()
+                sig_html = f'<div class="contradiction-sig">{_e(sig)}</div>' if sig else ""
+                impl_html += (
+                    f'<div class="contradiction-row">'
+                    f'<div class="contradiction-claim">Claim: {_e(claim)}</div>'
+                    f'<div class="contradiction-reality">Record: {_e(reality)}</div>'
+                    f"{sig_html}</div>"
+                )
+
+        parts.append(
+            f'<section class="brief-section">'
+            f'<div class="brief-label">DOWNSTREAM IMPLICATIONS</div>'
+            f'<div class="implications-list">{impl_html}</div></section>'
+        )
+
+    signals = brief.get("analyst_signals") if isinstance(brief.get("analyst_signals"), list) else []
+    if signals:
+        sig_html = ""
+        for sig in signals[:5]:
+            if not isinstance(sig, dict):
+                continue
+            source = str(sig.get("source") or "").strip()
+            sig_txt = str(sig.get("signal") or "").strip()
+            if not source or not sig_txt:
+                continue
+            conf = str(sig.get("confidence") or "SECONDARY").strip().upper()
+            conf_colors = {
+                "PRIMARY": ("#2e7d32", "#e8f5e9"),
+                "SECONDARY": ("#555", "#f5f5f5"),
+                "INFERRED": ("#e65100", "#fff3e0"),
+            }
+            sc, sbg = conf_colors.get(conf, ("#555", "#f5f5f5"))
+            url = str(sig.get("url") or sig.get("url_hint") or "").strip()
+            url_ok = url if url.startswith("http://") or url.startswith("https://") else ""
+            if url_ok:
+                source_html = (
+                    f'<a href="{_e(url_ok)}" target="_blank" rel="noopener" '
+                    f'class="signal-source-link">{_e(source)}</a>'
+                )
+            else:
+                source_html = f'<span class="signal-source">{_e(source)}</span>'
+            model = str(sig.get("model_type") or "").strip()
+            model_html = f'<span class="signal-model">· {_e(model)}</span>' if model else ""
+            date = str(sig.get("date") or "").strip()
+            date_html = f'<span class="signal-date">· {_e(date)}</span>' if date else ""
+            excerpt = str(sig.get("excerpt_note") or "").strip()
+            ex_html = f'<div class="signal-excerpt">{_e(excerpt)}</div>' if excerpt else ""
+            sig_html += (
+                f'<div class="signal-row">'
+                f'<div class="signal-meta">'
+                f"{source_html}"
+                f'<span class="signal-conf-tag" style="color:{sc};background:{sbg};">{_e(conf)}</span>'
+                f"{model_html}{date_html}</div>"
+                f'<div class="signal-text">{_e(sig_txt)}</div>{ex_html}</div>'
+            )
+
+        parts.append(
+            f'<section class="brief-section">'
+            f'<div class="brief-label">ANALYST SIGNALS</div>'
+            f'<div class="signals-list">{sig_html}</div></section>'
+        )
+
+    comp = brief.get("comparable_moment") if isinstance(brief.get("comparable_moment"), dict) else {}
+    if not comp and isinstance(brief.get("comparable_moment_brief"), dict):
+        c0 = brief["comparable_moment_brief"]
+        comp = {
+            "headline": c0.get("headline"),
+            "then": {"dynamics": c0.get("then")},
+            "now": {"current_signals": c0.get("now")},
+            "pattern": c0.get("lesson"),
+            "breakpoint": "",
+        }
+    headline = str(comp.get("headline") or "").strip()
+    if headline:
+        then = comp.get("then") if isinstance(comp.get("then"), dict) else {}
+        now = comp.get("now") if isinstance(comp.get("now"), dict) else {}
+        pattern = str(comp.get("pattern") or "").strip()
+        brk = str(comp.get("breakpoint") or "").strip()
+
+        then_trig = str(then.get("trigger") or "").strip()
+        then_dyn = str(then.get("dynamics") or "").strip()
+        then_tl = str(then.get("timeline") or "").strip()
+        now_sig = str(now.get("current_signals") or "").strip()
+        now_act = str(now.get("actor_alignment") or "").strip()
+
+        then_bits = ""
+        if then_trig:
+            then_bits += f'<div class="prec-row"><strong>Trigger:</strong> {_e(then_trig)}</div>'
+        if then_dyn:
+            then_bits += f'<div class="prec-row"><strong>Dynamics:</strong> {_e(then_dyn)}</div>'
+        if then_tl:
+            then_bits += f'<div class="prec-row"><strong>Timeline:</strong> {_e(then_tl)}</div>'
+
+        now_bits = ""
+        if now_sig:
+            now_bits += f'<div class="prec-row">{_e(now_sig)}</div>'
+        if now_act:
+            now_bits += (
+                f'<div class="prec-row"><strong>Actor alignment:</strong> {_e(now_act)}</div>'
+            )
+
+        pat_html = (
+            f'<div class="comparable-pattern"><strong>Pattern:</strong> {_e(pattern)}</div>'
+            if pattern
+            else ""
+        )
+        brk_html = (
+            f'<div class="breakpoint-block">'
+            f'<span class="breakpoint-label">WHERE ANALOGY BREAKS DOWN</span>'
+            f'<span class="breakpoint-text">{_e(brk)}</span></div>'
+            if brk
+            else ""
+        )
+
+        parts.append(
+            f'<section class="brief-section brief-comparable">'
+            f'<div class="brief-label">COMPARABLE MOMENT</div>'
+            f'<div class="comparable-headline">{_e(headline)}</div>'
+            f'<div class="comparable-columns">'
+            f'<div class="comparable-col">'
+            f'<div class="comparable-col-label">THEN</div>{then_bits}</div>'
+            f'<div class="comparable-col">'
+            f'<div class="comparable-col-label">NOW</div>{now_bits}</div>'
+            f"</div>{pat_html}{brk_html}</section>"
+        )
+
+    hooks = brief.get("investigative_hooks") if isinstance(brief.get("investigative_hooks"), dict) else {}
+    questions = hooks.get("next_questions") if isinstance(hooks.get("next_questions"), list) else []
+    actions = hooks.get("next_actions") if isinstance(hooks.get("next_actions"), list) else []
+
+    if questions or actions:
+        q_html = ""
+        for q in questions[:6]:
+            qs = str(q).strip()
+            if not qs:
+                continue
+            enc = quote_plus(qs[:200])
+            q_html += (
+                f'<div class="hook-question">'
+                f'<span class="hook-q-icon">?</span>'
+                f'<a href="https://news.google.com/search?q={enc}" '
+                f'target="_blank" rel="noopener" class="hook-q-link">{_e(qs)}</a></div>'
+            )
+
+        a_html = ""
+        for act in actions[:6]:
+            if not isinstance(act, dict):
+                continue
+            action = str(act.get("action") or "").strip()
+            where = str(act.get("where") or "").strip()
+            why_s = str(act.get("why") or "").strip()
+            if not action and not where:
+                continue
+            href = _brief_hook_action_href(where, action)
+            if href:
+                where_html = (
+                    f'<a href="{_e(href)}" target="_blank" rel="noopener" '
+                    f'class="action-where-link">{_e(where or action)}</a>'
+                )
+            else:
+                where_html = f'<span class="action-where">{_e(where)}</span>'
+            why_html = f'<div class="action-why">{_e(why_s)}</div>' if why_s else ""
+            verb = _e(action) if action else ""
+            a_html += (
+                f'<div class="hook-action">'
+                f'<span class="action-verb">{verb}</span> {where_html}{why_html}</div>'
+            )
+
+        qh = f'<div class="hooks-questions-label">NEXT QUESTIONS</div>{q_html}' if q_html else ""
+        ah = f'<div class="hooks-actions-label">NEXT ACTIONS</div>{a_html}' if a_html else ""
+        if qh or ah:
+            parts.append(
+                f'<section class="brief-section brief-hooks">'
+                f'<div class="brief-label">INVESTIGATIVE HOOKS</div>{qh}{ah}</section>'
+            )
+
+    return f'<div class="ctx-brief-stack">{"".join(parts)}</div>'
+
+
 def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     rid         = receipt.get("receipt_id") or receipt.get("report_id", "")
     rtype       = receipt.get("receipt_type", "article_analysis")
@@ -1936,6 +2382,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
                 )
 
     claims_section_html = _claims_section_html(receipt)
+    summary_block_html = _summary_section_html(receipt)
     dig_deeper_html = _dig_deeper_button_html(str(rid))
     perspectives_block_html = (
         _global_perspectives_section_html(gp_raw)
@@ -2263,6 +2710,129 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     border:1px solid rgba(26,26,26,0.12);
   }}
   .inv-paper-card{{background:#fff;border:1px solid rgba(26,26,26,0.15);border-radius:4px;}}
+  .ctx-brief-stack{{margin-bottom:32px;}}
+  .summary-section,.brief-section{{
+    background:#fff;border:1px solid rgba(26,26,26,0.12);border-radius:4px;padding:14px 18px;margin-bottom:10px;
+  }}
+  .brief-label{{
+    font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#555;margin-bottom:8px;
+    font-weight:700;display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  }}
+  .summary-text,.brief-text{{font-size:18px;color:#333;line-height:1.7;}}
+  .brief-text{{font-size:16px;}}
+  .claim-type-tag{{
+    font-size:11px;font-weight:800;letter-spacing:0.1em;padding:2px 8px;border-radius:10px;text-transform:uppercase;vertical-align:middle;
+  }}
+  .signal-type-tag{{
+    font-size:11px;font-weight:700;padding:1px 6px;border-radius:8px;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;
+  }}
+  .impl-type-tag{{font-size:10px !important;padding:2px 5px !important;}}
+  .urgency-badge{{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:700;letter-spacing:0.06em;}}
+  .impact-signals{{margin-top:8px;display:flex;flex-direction:column;gap:5px;}}
+  .impact-signal{{
+    display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:4px 0;border-bottom:1px solid rgba(26,26,26,0.06);
+  }}
+  .impact-signal:last-child{{border-bottom:none;}}
+  .impact-signal-text{{font-size:16px;color:#333;flex:1;line-height:1.55;}}
+  .signal-attr{{font-size:13px;color:#888;}}
+  .brief-precedent{{border-left:3px solid #1a1a1a;}}
+  .precedent-case{{
+    font-size:17px;font-weight:700;color:#1a1a1a;margin-bottom:8px;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  }}
+  .precedent-date{{font-size:14px;font-weight:400;color:#888;}}
+  .precedent-rows{{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;}}
+  .prec-row{{font-size:15px;color:#444;line-height:1.5;}}
+  .conf-low-note{{font-size:12px;color:#e65100;font-style:italic;}}
+  .delta-block{{margin:8px 0;padding:8px 0;border-top:1px dashed rgba(26,26,26,0.12);}}
+  .delta-title{{
+    font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#aaa;margin-bottom:6px;font-weight:700;
+  }}
+  .delta-row{{display:flex;gap:10px;padding:3px 0;font-size:15px;}}
+  .delta-label{{min-width:130px;color:#888;font-size:14px;}}
+  .delta-text{{color:#333;flex:1;}}
+  .breakpoint-block{{
+    background:#fff8e1;border-left:3px solid #f9a825;padding:8px 10px;margin-top:8px;
+    display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;
+  }}
+  .breakpoint-label{{
+    font-size:11px;font-weight:800;color:#f57f17;letter-spacing:0.08em;white-space:nowrap;
+  }}
+  .breakpoint-text{{font-size:15px;color:#5d4037;flex:1;line-height:1.5;}}
+  .impl-group-label{{
+    font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#aaa;margin-bottom:4px;font-weight:700;
+  }}
+  .contradiction-label{{color:#c62828 !important;}}
+  .implications-list{{display:flex;flex-direction:column;gap:4px;}}
+  .implication-row{{
+    display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid rgba(26,26,26,0.06);flex-wrap:wrap;
+  }}
+  .implication-row:last-child{{border-bottom:none;}}
+  .observed-row{{opacity:0.9;}}
+  .impl-direction{{font-size:1.1em;font-weight:700;min-width:14px;}}
+  .impl-domain{{font-size:11px;font-weight:700;letter-spacing:0.08em;color:#888;min-width:75px;}}
+  .impl-text{{font-size:15px;color:#333;flex:1;line-height:1.5;min-width:120px;}}
+  .impl-source{{font-size:14px;color:#888;}}
+  .impl-timeframe{{font-size:12px;color:#aaa;white-space:nowrap;}}
+  .contradiction-row{{
+    background:#fff8f8;border-left:2px solid #e53935;padding:8px 10px;margin-bottom:6px;border-radius:0 3px 3px 0;
+  }}
+  .contradiction-claim{{font-size:15px;color:#444;font-style:italic;}}
+  .contradiction-reality{{font-size:15px;color:#c62828;margin-top:4px;}}
+  .contradiction-sig{{font-size:13px;color:#888;margin-top:4px;}}
+  .signals-list{{display:flex;flex-direction:column;gap:10px;}}
+  .signal-row{{padding:8px 0;border-bottom:1px solid rgba(26,26,26,0.06);}}
+  .signal-row:last-child{{border-bottom:none;}}
+  .signal-meta{{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px;}}
+  .signal-source{{font-size:15px;font-weight:600;color:#1a1a1a;}}
+  .signal-source-link{{
+    font-size:15px;font-weight:600;color:#1a1a1a;text-decoration:underline;text-decoration-color:#ccc;
+  }}
+  .signal-source-link:hover{{text-decoration-color:#1a1a1a;}}
+  .signal-conf-tag{{font-size:10px;padding:1px 6px;border-radius:8px;font-weight:700;letter-spacing:0.06em;}}
+  .signal-model{{font-size:13px;color:#aaa;}}
+  .signal-date{{font-size:13px;color:#aaa;}}
+  .signal-text{{font-size:15px;color:#444;font-style:italic;line-height:1.5;}}
+  .signal-excerpt{{font-size:13px;color:#aaa;margin-top:4px;}}
+  .brief-comparable{{background:#f8f7f2;}}
+  .comparable-headline{{
+    font-size:18px;font-weight:700;color:#1a1a1a;font-style:italic;margin-bottom:12px;line-height:1.4;
+  }}
+  .comparable-columns{{display:flex;gap:16px;margin-bottom:10px;}}
+  .comparable-col{{flex:1;}}
+  .comparable-col-label{{
+    font-size:11px;text-transform:uppercase;letter-spacing:0.1em;color:#aaa;font-weight:700;margin-bottom:4px;
+  }}
+  .comparable-pattern{{
+    font-size:15px;color:#333;padding-top:8px;border-top:1px solid rgba(26,26,26,0.1);line-height:1.5;
+  }}
+  .brief-hooks{{border-left:3px solid #1a1a1a;}}
+  .hooks-questions-label,.hooks-actions-label{{
+    font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#aaa;font-weight:700;margin:8px 0 4px;
+  }}
+  .hooks-actions-label{{margin-top:14px;}}
+  .hook-question{{
+    display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid rgba(26,26,26,0.06);
+  }}
+  .hook-q-icon{{font-size:16px;font-weight:700;color:#888;min-width:14px;}}
+  .hook-q-link{{
+    font-size:15px;color:#1a1a1a;text-decoration:underline;text-decoration-color:#ccc;flex:1;line-height:1.5;
+  }}
+  .hook-q-link:hover{{text-decoration-color:#1a1a1a;}}
+  .hook-action{{
+    padding:6px 0;border-bottom:1px solid rgba(26,26,26,0.06);display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;
+  }}
+  .action-verb{{
+    font-size:12px;text-transform:uppercase;letter-spacing:0.07em;color:#888;white-space:nowrap;
+  }}
+  .action-where,.action-where-link{{font-size:15px;font-weight:600;color:#1a1a1a;}}
+  .action-where-link{{text-decoration:underline;text-decoration-color:#ccc;}}
+  .action-where-link:hover{{text-decoration-color:#1a1a1a;}}
+  .action-why{{width:100%;font-size:13px;color:#888;margin-top:4px;}}
+  @media (max-width: 600px) {{
+    .comparable-columns{{flex-direction:column;}}
+    .delta-row{{flex-direction:column;gap:2px;}}
+    .implication-row{{flex-direction:column;align-items:flex-start;gap:4px;}}
+  }}
   .reporter-only{{display:none;}}
   body.inv-reporter-mode .reporter-only{{display:block !important;}}
   body.inv-reporter-mode .inv-reader-soft{{display:none !important;}}
@@ -3217,8 +3787,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 <div style="height:1px;background:rgba(26,26,26,0.2);margin-bottom:28px"></div>
 
-<!-- SUMMARY -->
-{f'<div class="inv-paper-card inv-reader-soft" style="margin-bottom:32px;padding:18px 22px"><div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#555;margin-bottom:8px">Summary</div><p style="font-size:18px;color:#333;line-height:1.7">{_e(str(narrative)[:400])}{"…" if len(str(narrative))>400 else ""}</p></div>' if narrative else ""}
+<!-- SUMMARY + CONTEXTUAL BRIEF -->
+{summary_block_html}
 
 {echo_standalone_html}
 

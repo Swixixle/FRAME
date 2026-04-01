@@ -68,6 +68,9 @@ def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
     gp = body.get("global_perspectives")
     if isinstance(gp, dict) and gp:
         signing_body["global_perspectives"] = gp
+    cb = body.get("contextual_brief")
+    if isinstance(cb, dict) and cb:
+        signing_body["contextual_brief"] = cb
     for k in (
         "volatility_score",
         "volatility_score_note",
