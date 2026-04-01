@@ -12,15 +12,6 @@ from typing import Any
 
 from receipt_store import list_recent_article_investigations
 
-EXAMPLE_PROMPTS: list[dict[str, str]] = [
-    {
-        "label": "ProPublica article",
-        "value": "https://www.propublica.org/article/trump-doj-dropped-23000-criminal-investigations-immigration",
-    },
-    {"label": "Try a name", "value": "Pete Hegseth"},
-    {"label": "Try a topic", "value": "DOJ immigration enforcement 2025"},
-]
-
 
 def _e(s: Any) -> str:
     return html.escape(str(s) if s is not None else "")
@@ -150,12 +141,6 @@ def render_front_page(data: dict[str, Any]) -> str:
     secondaries = data.get("secondary_stories") or []
     empty = bool(data.get("empty") or lead is None)
 
-    example_pills = "".join(
-        f'<button type="button" class="example-pill" data-example="{html.escape(p["value"], quote=True)}">'
-        f'{_e(p["label"])}</button>'
-        for p in EXAMPLE_PROMPTS
-    )
-
     featured_section = ""
     if lead and not empty:
         v = int(lead["volatility"])
@@ -240,27 +225,29 @@ body.fp-body {{
 .fp-wrap {{ max-width: 900px; margin: 0 auto; padding: 0 48px 64px; }}
 @media (max-width: 720px) {{ .fp-wrap {{ padding: 0 20px 48px; }} }}
 
-.masthead {{
-  text-align: center;
-  padding: 2rem 0.5rem 1.25rem;
+.fp-hero-stack {{
+  padding: 1.5rem 0 0.5rem;
+  margin-bottom: 1.5rem;
   border-bottom: 3px double #1a1a1a;
-  margin-bottom: 1.75rem;
 }}
+
 .masthead-top {{
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  font-size: 0.75em;
-  color: #888;
-  letter-spacing: 0.05em;
+  width: 100%;
+  max-width: 700px;
+  margin: 0 auto 2.5rem;
+  font-size: 11px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-bottom: 0.5rem;
+  color: #999;
+  gap: 10px;
   flex-wrap: wrap;
 }}
-.masthead-tagline {{ color: #888; }}
+
 .fp-mode-masthead {{
-  margin: 0 0 0 auto;
+  margin-left: auto;
   display: inline-flex;
   gap: 4px;
 }}
@@ -281,82 +268,192 @@ body.fp-body {{
   color: var(--paper);
   border-color: var(--ink);
 }}
-.masthead-title {{
-  font-family: "Playfair Display", serif;
-  font-size: clamp(2.5rem, 8vw, 3.75rem);
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  margin: 0;
-  line-height: 1;
-}}
-.masthead-rule {{
-  border: none;
-  border-top: 1px solid #1a1a1a;
-  margin: 0.75rem auto;
-  max-width: 300px;
-}}
-.masthead-sub {{
-  color: #555;
-  font-size: 0.95em;
-  max-width: 520px;
-  margin: 0.5rem auto 0;
-  line-height: 1.5;
+
+.eye-group {{
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 420px;
+  margin: 0 auto;
 }}
 
-.fp-hero {{ max-width: 680px; margin: 0 auto 2rem; }}
-.fp-hero-label {{
+.eye-container {{
+  width: 380px;
+  height: 180px;
+  cursor: pointer;
+  position: relative;
+}}
+
+.eye-svg-main {{
+  width: 100%;
+  height: 100%;
+  overflow: visible;
   display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 10px;
-  text-align: center;
-  color: #555;
 }}
-.fp-hero-row {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }}
-.fp-hero-row input[type="text"] {{
-  flex: 1;
-  min-width: 200px;
-  padding: 12px 14px;
-  border: 1px solid rgba(26,26,26,0.2);
-  border-radius: 2px;
-  font-family: "IBM Plex Sans", sans-serif;
-  font-size: 15px;
+
+.eye-closed-arc {{
+  fill: none;
+  stroke: #1a1a1a;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  transition: opacity 0.3s ease;
 }}
-.fp-hero-row button[type="submit"] {{
-  font-family: "IBM Plex Sans", sans-serif;
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 12px 20px;
-  background: var(--ink);
-  color: var(--paper);
-  border: none;
-  border-radius: 2px;
-  cursor: pointer;
+
+.eye-lash-main {{
+  stroke: #1a1a1a;
+  stroke-width: 2;
+  stroke-linecap: round;
+  transition: opacity 0.2s ease;
 }}
-.example-prompts {{
+
+.eye-open-shape {{
+  fill: #f8f7f2;
+  stroke: #1a1a1a;
+  stroke-width: 2.5;
+  opacity: 0;
+  transition: opacity 0.3s ease 0.05s;
+}}
+
+.eye-iris {{
+  fill: none;
+  stroke: #1a1a1a;
+  stroke-width: 1.5;
+  opacity: 0;
+  transition: opacity 0.25s ease 0.15s;
+}}
+
+.eye-pupil-main {{
+  fill: #1a1a1a;
+  opacity: 0;
+  transition: opacity 0.25s ease 0.18s;
+}}
+
+.eye-shine-main {{
+  fill: #ffffff;
+  opacity: 0;
+  transition: opacity 0.2s ease 0.25s;
+}}
+
+.eye-group:hover .eye-closed-arc,
+.eye-group:hover .eye-lash-main {{
+  opacity: 0;
+}}
+
+.eye-group:hover .eye-open-shape,
+.eye-group:hover .eye-iris,
+.eye-group:hover .eye-pupil-main,
+.eye-group:hover .eye-shine-main {{
+  opacity: 1;
+}}
+
+.eye-group:hover .search-reveal {{
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: all;
+}}
+
+.search-reveal {{
+  width: 380px;
+  margin-top: 1.8rem;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition: opacity 0.25s ease 0.15s, transform 0.25s ease 0.15s;
   display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-top: 12px;
-  justify-content: center;
+  border: 1.5px solid #1a1a1a;
+  background: #ffffff;
+  border-radius: 2px;
+  overflow: hidden;
 }}
-.example-label {{ font-size: 0.8em; color: #999; }}
-.example-pill {{
-  background: none;
-  border: 1px solid #ddd;
-  border-radius: 20px;
-  padding: 4px 12px;
-  font-size: 0.8em;
-  cursor: pointer;
-  color: #555;
+
+.fp-search-input {{
+  flex: 1;
+  border: none;
+  padding: 10px 14px;
+  font-size: 12px;
+  background: transparent;
+  color: #1a1a1a;
+  outline: none;
   font-family: inherit;
+  letter-spacing: 0.02em;
 }}
-.example-pill:hover {{ border-color: #999; color: #1a1a1a; }}
+
+.fp-search-input::placeholder {{
+  color: #aaa;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}}
+
+.fp-search-btn {{
+  background: #1a1a1a;
+  color: #ffffff;
+  border: none;
+  padding: 10px 18px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  flex-shrink: 0;
+}}
+
+.fp-search-btn:hover {{
+  background: #333;
+}}
+
+.fp-title-block {{
+  text-align: center;
+  margin-top: 2rem;
+}}
+
+.fp-title {{
+  font-family: "Playfair Display", serif;
+  font-size: clamp(2.5rem, 8vw, 4.5rem);
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  color: #1a1a1a;
+  line-height: 1;
+  margin: 0;
+}}
+
+.fp-title-rule {{
+  width: 60px;
+  height: 1.5px;
+  background: #1a1a1a;
+  margin: 1rem auto;
+}}
+
+.fp-title-sub {{
+  font-size: 11px;
+  color: #999;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0;
+}}
+
+@media (prefers-color-scheme: dark) {{
+  .eye-closed-arc, .eye-lash-main {{ stroke: #e0e0e0; }}
+  .eye-open-shape {{ fill: #2a2a2a; stroke: #e0e0e0; }}
+  .eye-iris {{ stroke: #e0e0e0; }}
+  .eye-pupil-main {{ fill: #e0e0e0; }}
+  .eye-shine-main {{ fill: #1a1a1a; }}
+  .search-reveal {{ border-color: #e0e0e0; background: #1a1a1a; }}
+  .fp-search-input {{ color: #e0e0e0; }}
+  .fp-search-input::placeholder {{ color: #666; }}
+  .fp-search-btn {{ background: #e0e0e0; color: #1a1a1a; }}
+  .fp-search-btn:hover {{ background: #ccc; }}
+  .fp-title {{ color: #e0e0e0; }}
+  .fp-title-rule {{ background: #e0e0e0; }}
+  .masthead-top {{ color: #666; }}
+  .fp-title-sub {{ color: #888; }}
+}}
+
+@media (max-width: 480px) {{
+  .eye-container {{ width: 280px; height: 133px; }}
+  .search-reveal {{ width: 280px; }}
+}}
 
 .rule {{ border: none; border-top: 1px solid var(--rule); margin: 24px 0; }}
 .rule-bold {{ border: none; border-top: 2px solid var(--ink); margin: 16px 0; opacity: 0.85; }}
@@ -464,31 +561,49 @@ body.fp-reporter-mode .reader-focus {{ display: none !important; }}
 <body class="fp-body">
 <div class="fp-wrap">
 
-<header class="masthead" aria-label="Masthead">
+<section class="fp-hero-stack" aria-label="Home hero">
   <div class="masthead-top">
-    <span class="masthead-date" id="today-date"></span>
-    <span class="masthead-tagline">Receipts, not verdicts.</span>
+    <span id="today-date"></span>
+    <span>Receipts, not verdicts.</span>
     <div class="fp-mode fp-mode-masthead">
       <button type="button" id="fp-mode-reader" class="active">Reader</button>
       <button type="button" id="fp-mode-reporter">Reporter</button>
     </div>
   </div>
-  <h1 class="masthead-title">PUBLIC EYE</h1>
-  <div class="masthead-rule" aria-hidden="true"></div>
-  <p class="masthead-sub">Paste any news article. Get a signed, traceable record of every claim — who said it, what the record shows, and what nobody is covering.</p>
-</header>
 
-<section class="fp-hero" aria-label="Start an investigation">
-  <label class="fp-hero-label" for="fp-investigate-q">Investigate</label>
-  <form id="fp-investigate-form" class="fp-hero-row" action="#" method="get">
-    <input type="text" id="fp-investigate-q" name="q" autocomplete="off"
-      placeholder="Paste a URL, type a name, or enter a topic…"
-      aria-label="Article URL, name, or topic" />
-    <button type="submit">INVESTIGATE</button>
-  </form>
-  <div class="example-prompts">
-    <span class="example-label">Try:</span>
-    {example_pills}
+  <div class="eye-group">
+    <div class="eye-container" id="main-eye">
+      <svg class="eye-svg-main" viewBox="0 0 380 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path class="eye-closed-arc" d="M10 90 Q95 20 190 20 Q285 20 370 90"/>
+        <line class="eye-lash-main" x1="190" y1="20" x2="190" y2="4"/>
+        <line class="eye-lash-main" x1="140" y1="30" x2="132" y2="15"/>
+        <line class="eye-lash-main" x1="240" y1="30" x2="248" y2="15"/>
+        <line class="eye-lash-main" x1="100" y1="52" x2="88" y2="40"/>
+        <line class="eye-lash-main" x1="280" y1="52" x2="292" y2="40"/>
+        <path class="eye-open-shape" d="M10 90 Q95 10 190 10 Q285 10 370 90 Q285 170 190 170 Q95 170 10 90 Z"/>
+        <circle class="eye-iris" cx="190" cy="90" r="52"/>
+        <circle class="eye-pupil-main" cx="190" cy="90" r="34"/>
+        <circle class="eye-shine-main" cx="208" cy="72" r="9"/>
+      </svg>
+    </div>
+
+    <div class="search-reveal">
+      <input
+        class="fp-search-input"
+        type="text"
+        id="fp-query"
+        placeholder="Paste a URL, name, or topic..."
+        autocomplete="off"
+        aria-label="Article URL, name, or topic"
+      />
+      <button type="button" class="fp-search-btn" onclick="fpSubmit()">INVESTIGATE</button>
+    </div>
+  </div>
+
+  <div class="fp-title-block">
+    <h1 class="fp-title">PUBLIC EYE</h1>
+    <div class="fp-title-rule"></div>
+    <p class="fp-title-sub">A front page for contested facts</p>
   </div>
 </section>
 
@@ -513,36 +628,32 @@ body.fp-reporter-mode .reader-focus {{ display: none !important; }}
 
 <script id="fp-data" type="application/json">{fp_json}</script>
 <script>
-(function() {{
-  function publicEyeInvestigate(q) {{
-    q = (q || '').trim();
-    if (!q) return;
-    if (q.startsWith('http://') || q.startsWith('https://')) {{
-      window.location.href = '/analyze?' + new URLSearchParams({{ url: q }});
-      return;
-    }}
+function fpSubmit() {{
+  var query = document.getElementById('fp-query');
+  var q = query ? query.value.trim() : '';
+  if (!q) return;
+  if (q.startsWith('http://') || q.startsWith('https://')) {{
+    window.location.href = '/analyze?url=' + encodeURIComponent(q);
+  }} else {{
     window.open('https://news.google.com/search?q=' + encodeURIComponent(q), '_blank');
   }}
-  var form = document.getElementById('fp-investigate-form');
-  var input = document.getElementById('fp-investigate-q');
-  if (form && input) {{
-    form.addEventListener('submit', function(e) {{
-      e.preventDefault();
-      publicEyeInvestigate(input.value);
+}}
+
+document.addEventListener('DOMContentLoaded', function() {{
+  var input = document.getElementById('fp-query');
+  if (input) {{
+    input.addEventListener('keydown', function(e) {{
+      if (e.key === 'Enter') fpSubmit();
     }});
   }}
-  document.querySelectorAll('.example-pill').forEach(function(btn) {{
-    btn.addEventListener('click', function() {{
-      var v = btn.getAttribute('data-example') || '';
-      if (input) input.value = v;
-    }});
-  }});
-  var td = document.getElementById('today-date');
-  if (td) {{
-    td.textContent = new Date().toLocaleDateString('en-US', {{
+
+  var dateEl = document.getElementById('today-date');
+  if (dateEl) {{
+    dateEl.textContent = new Date().toLocaleDateString('en-US', {{
       weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
     }});
   }}
+
   var KEY = 'publicEyeMode';
   function setMode(rep) {{
     document.body.classList.toggle('fp-reporter-mode', rep);
@@ -550,16 +661,16 @@ body.fp-reporter-mode .reader-focus {{ display: none !important; }}
     var b = document.getElementById('fp-mode-reporter');
     if (a) a.classList.toggle('active', !rep);
     if (b) b.classList.toggle('active', rep);
-    try {{ localStorage.setItem(KEY, rep ? 'reporter' : 'reader'); }} catch (e) {{}}
+    try {{ localStorage.setItem(KEY, rep ? 'reporter' : 'reader'); }} catch (err) {{}}
   }}
   try {{
     if (localStorage.getItem(KEY) === 'reporter') setMode(true);
-  }} catch (e) {{}}
+  }} catch (err) {{}}
   var br = document.getElementById('fp-mode-reader');
   var bp = document.getElementById('fp-mode-reporter');
   if (br) br.onclick = function() {{ setMode(false); }};
   if (bp) bp.onclick = function() {{ setMode(true); }};
-}})();
+}});
 </script>
 <script>
 (function keepWarm() {{
