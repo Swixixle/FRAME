@@ -109,6 +109,11 @@ from claim_router import (
     route_claim as route_article_claim,
     subject_looks_like_person,
 )
+from comparative_coverage import (
+    extract_query_terms,
+    fetch_newsapi_coverage,
+    get_comparative_coverage,
+)
 from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
 from receipt_store import (
@@ -879,6 +884,314 @@ async def investigation_html_page(receipt_id: str) -> HTMLResponse:
         raise HTTPException(status_code=404, detail="Investigation not found")
     coalition = await asyncio.to_thread(get_coalition_map, rid)
     return HTMLResponse(render_investigation_page(receipt, coalition))
+
+
+# --- Dig deeper (on-demand: counter-claims, unsourced patterns, crime taxonomy, CourtListener) ---
+
+_PRIMARY_TITLE_CUE = re.compile(
+    r"\b(court\s+filing|indictment|complaint|d\.?c\.?\s+|\bdoj\b|f\.?b\.?i\.?|\bdea\b|"
+    r"sec\s+filing|affidavit|documents?\s+show|records?\s+show|according\s+to\s+(court|the\s+filing)|"
+    r"unsealed|subpoena)\b",
+    re.I,
+)
+
+
+def _call_claude_json_dig_deeper(prompt: str) -> Any:
+    """Sync Claude call returning parsed JSON; use with asyncio.to_thread. Returns [] on failure."""
+    import anthropic
+
+    key = (os.environ.get("ANTHROPIC_API_KEY") or "").strip()
+    if not key:
+        return []
+    try:
+        model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        client = anthropic.Anthropic(api_key=key)
+        msg = client.messages.create(
+            model=model,
+            max_tokens=900,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = (msg.content[0].text or "").strip()
+        if text.startswith("```"):
+            parts = text.split("```")
+            if len(parts) >= 2:
+                text = parts[1]
+                if text.lstrip().startswith("json"):
+                    text = text.lstrip()[4:].lstrip()
+        return json.loads(text.strip())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[_call_claude_json_dig_deeper] %s", exc)
+        return []
+
+
+def _receipt_to_article_dict(receipt: dict[str, Any]) -> dict[str, Any]:
+    art = receipt.get("article") if isinstance(receipt.get("article"), dict) else {}
+    ne = receipt.get("named_entities")
+    if not isinstance(ne, list):
+        ne = []
+    return {
+        "title": str(art.get("title") or ""),
+        "text": str(art.get("text") or ""),
+        "publication": str(art.get("publication") or ""),
+        "author": str(art.get("author") or ""),
+        "named_entities": [str(x) for x in ne if isinstance(x, str) and str(x).strip()],
+        "article_topic": str(receipt.get("article_topic") or receipt.get("narrative") or "")[:4000],
+    }
+
+
+def _dig_deeper_entity_is_person(name: str) -> bool:
+    n = (name or "").strip()
+    if not n:
+        return False
+    return subject_looks_like_person({"subject": n, "claim": "", "claim_type": ""})
+
+
+def _justice_entity_signal(named_entities: list[Any]) -> bool:
+    phrase_needles = (
+        "department of justice",
+        "justice department",
+        "federal bureau of investigation",
+        "drug enforcement",
+        "federal court",
+        "u.s. attorney",
+        "us attorney",
+        "prosecution",
+        "u.s. district",
+        "us district",
+    )
+    word_needle = re.compile(
+        r"\b(fbi|dea|doj|u\.s\. attorney|us attorney)\b",
+        re.I,
+    )
+    for e in named_entities:
+        if not isinstance(e, str):
+            continue
+        el = e.lower()
+        if word_needle.search(e):
+            return True
+        for n in phrase_needles:
+            if n in el:
+                return True
+    return False
+
+
+def _gather_coverage_articles_sync(receipt: dict[str, Any]) -> list[dict[str, Any]]:
+    article = _receipt_to_article_dict(receipt)
+    cov = get_comparative_coverage(article)
+    articles: list[dict[str, Any]] = list(cov.get("articles") or [])
+    if not articles:
+        terms = extract_query_terms(article)
+        articles = list(fetch_newsapi_coverage(terms) or [])
+    return articles
+
+
+def _count_outlets_for_claim(
+    claim_text: str, articles: list[dict[str, Any]]
+) -> tuple[int, int]:
+    """Returns (repeating_outlets, titles_with_primary_source_cues)."""
+    words = re.findall(r"[A-Za-z0-9]+", (claim_text or "").lower())
+    sig = [w for w in words if len(w) > 3][:15]
+    if len(sig) < 2:
+        sig = [w for w in words if len(w) > 2][:10]
+    if not sig:
+        return (len(articles), 0)
+    matches: list[str] = []
+    for a in articles:
+        if not isinstance(a, dict):
+            continue
+        title = (a.get("title") or "")[:800]
+        tl = title.lower()
+        hit = sum(1 for w in sig if w in tl)
+        if hit >= 2 or (len(sig) <= 2 and hit >= 1):
+            matches.append(title)
+    if not matches:
+        return (len(articles), 0)
+    primary = sum(1 for t in matches if _PRIMARY_TITLE_CUE.search(t))
+    return (len(matches), primary)
+
+
+def _unsourced_patterns_from_claims(
+    claims: list[dict[str, Any]] | None,
+    articles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not claims:
+        return []
+    for c in claims:
+        if not isinstance(c, dict):
+            continue
+        claim_text = str(c.get("claim") or "").strip()
+        if not claim_text:
+            continue
+        cited = c.get("cited_source")
+        if cited is not None and str(cited).strip():
+            continue
+        oc, sc = _count_outlets_for_claim(claim_text, articles)
+        out.append(
+            {
+                "claim": claim_text[:280],
+                "outlet_count": oc,
+                "sources_citing": sc,
+            }
+        )
+    return out[:5]
+
+
+async def _courtlistener_background_for_person(person: str) -> dict[str, Any]:
+    from adapters import courtlistener as _cl
+
+    crim = await _cl.search_opinions(f"{person} criminal", limit=5)
+    civ = await _cl.search_opinions(person, limit=5)
+    merged = _merge_cl_opinion_rows(crim, civ)
+    cases: list[dict[str, Any]] = []
+    for row in merged[:10]:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        cases.append(
+            {
+                "case_name": str(row.get("case_name") or "Unknown"),
+                "court": str(row.get("court") or ""),
+                "date_filed": str(row.get("date_filed") or ""),
+                "url": url,
+                "snippet": str(row.get("summary") or "")[:220],
+            }
+        )
+    return {"person": person, "cases": cases}
+
+
+@app.get("/v1/dig-deeper/{receipt_id}")
+async def dig_deeper_endpoint(receipt_id: str) -> dict[str, Any]:
+    """
+    On-demand deep layers: counter-claims (NewsAPI + Claude), unsourced claim patterns,
+    crime taxonomy (when justice entities present), CourtListener for up to 4 persons.
+    Read-only; does not write to the database.
+    """
+    rid = receipt_id.strip()
+    receipt = await asyncio.to_thread(load_stored_receipt, rid)
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Receipt not found")
+
+    named_entities = receipt.get("named_entities")
+    if not isinstance(named_entities, list):
+        named_entities = []
+    ne_strs = [str(e).strip() for e in named_entities if isinstance(e, str) and str(e).strip()]
+
+    claims_in = receipt.get("claims_verified")
+    if not isinstance(claims_in, list):
+        claims_in = []
+
+    article_topic = str(receipt.get("article_topic") or receipt.get("narrative") or "")[:2000]
+
+    result: dict[str, Any] = {
+        "receipt_id": rid,
+        "counter_claims": [],
+        "unsourced_patterns": [],
+        "crime_taxonomy": [],
+        "court_records": [],
+    }
+
+    articles = await asyncio.to_thread(_gather_coverage_articles_sync, receipt)
+
+    # 1. Counter-claims
+    if articles and (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        lines: list[str] = []
+        for a in articles[:14]:
+            if not isinstance(a, dict):
+                continue
+            t = (a.get("title") or "").strip()
+            out = (a.get("outlet") or a.get("domain") or "").strip()
+            if t:
+                lines.append(f"- {t} ({out})" if out else f"- {t}")
+        if lines:
+            counter_prompt = (
+                f"Story summary:\n{article_topic}\n\n"
+                f"Related headlines from other outlets:\n"
+                + "\n".join(lines)
+                + "\n\nIdentify counter-claims or opposing framings relative to the dominant narrative. "
+                "For each item return: claim (short), source (outlet name or 'unknown'), "
+                "has_primary_source (boolean) — true only if the headline clearly references a named "
+                "court document, filing, agency release, or other primary record.\n"
+                "Return JSON array only, max 5 items: "
+                '[{"claim":"","source":"","has_primary_source":false}]. '
+                "Return [] if none."
+            )
+            cc_raw = await asyncio.to_thread(_call_claude_json_dig_deeper, counter_prompt)
+            if isinstance(cc_raw, list):
+                normalized: list[dict[str, Any]] = []
+                for item in cc_raw[:5]:
+                    if not isinstance(item, dict):
+                        continue
+                    hps = item.get("has_primary_source")
+                    if hps is None:
+                        hps = item.get("hasPrimarySource")
+                    normalized.append(
+                        {
+                            "claim": str(item.get("claim") or "")[:500],
+                            "source": str(item.get("source") or "")[:120],
+                            "has_primary_source": bool(hps),
+                        }
+                    )
+                result["counter_claims"] = normalized
+
+    # 2. Unsourced patterns
+    result["unsourced_patterns"] = _unsourced_patterns_from_claims(claims_in, articles)
+
+    # 3. Crime taxonomy (DOJ / FBI / DEA / federal court in named entities)
+    if _justice_entity_signal(ne_strs) and (os.environ.get("ANTHROPIC_API_KEY") or "").strip():
+        tax_prompt = (
+            f"Story context:\n{article_topic}\n\n"
+            f"Named entities: {', '.join(ne_strs[:40])}\n\n"
+            "This story involves federal criminal justice. Estimate a plausible case-type "
+            "breakdown (counts as relative weights) informed by typical DOJ public statistics "
+            "(drug, immigration, white-collar/fraud, violent crime, firearms, other). "
+            "Return JSON array only, max 6 objects: "
+            '[{"type":"Drug offenses","count":120},...] '
+            "where count is a positive integer (relative scale). Return [] if not applicable."
+        )
+        tax_raw = await asyncio.to_thread(_call_claude_json_dig_deeper, tax_prompt)
+        if isinstance(tax_raw, list):
+            rows: list[dict[str, Any]] = []
+            for item in tax_raw[:6]:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    cnt = int(item.get("count") or 0)
+                except (TypeError, ValueError):
+                    cnt = 0
+                if cnt <= 0:
+                    continue
+                rows.append(
+                    {
+                        "type": str(item.get("type") or "Other")[:80],
+                        "count": cnt,
+                    }
+                )
+            result["crime_taxonomy"] = rows
+
+    # 4. CourtListener — up to 4 persons
+    persons: list[str] = []
+    seen: set[str] = set()
+    for e in ne_strs:
+        if _dig_deeper_entity_is_person(e):
+            key = e.lower()
+            if key not in seen:
+                seen.add(key)
+                persons.append(e)
+        if len(persons) >= 4:
+            break
+
+    if persons:
+        tasks = [_courtlistener_background_for_person(p) for p in persons]
+        court_parts = await asyncio.gather(*tasks, return_exceptions=True)
+        for part in court_parts:
+            if isinstance(part, Exception):
+                logger.warning("[DIG_DEEPER] CourtListener task failed: %s", part)
+                continue
+            if isinstance(part, dict) and part.get("cases"):
+                result["court_records"].append(part)
+
+    return result
 
 
 @app.get("/verify")

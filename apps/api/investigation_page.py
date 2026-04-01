@@ -1366,6 +1366,45 @@ def _chain_items_html(chain: list, side_prefix: str) -> str:
     return hint + "".join(blocks)
 
 
+def _dig_deeper_button_html(receipt_id: str) -> str:
+    rid = (receipt_id or "").strip()
+    if not rid:
+        return ""
+    return f"""
+<section class="dig-deeper-section" aria-label="Dig deeper">
+    <button type="button" class="mouth-btn" id="dig-btn" data-receipt-id="{_e(rid)}"
+            aria-label="Dig deeper into this investigation">
+        <svg class="mouth-svg" id="mouth-svg" viewBox="0 0 120 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path class="mouth-closed"
+                  d="M 20 30 Q 40 24 60 24 Q 80 24 100 30 Q 80 36 60 36 Q 40 36 20 30 Z"/>
+            <path class="mouth-open-upper"
+                  d="M 20 28 Q 40 20 60 20 Q 80 20 100 28"/>
+            <path class="mouth-open-lower"
+                  d="M 20 28 Q 40 44 60 46 Q 80 44 100 28"/>
+            <rect class="mouth-teeth" x="28" y="21" width="10" height="8" rx="2"/>
+            <rect class="mouth-teeth" x="41" y="20" width="10" height="9" rx="2"/>
+            <rect class="mouth-teeth" x="54" y="20" width="10" height="9" rx="2"/>
+            <rect class="mouth-teeth" x="67" y="20" width="10" height="9" rx="2"/>
+            <rect class="mouth-teeth" x="80" y="21" width="10" height="8" rx="2"/>
+            <ellipse class="mouth-tongue" cx="60" cy="39" rx="16" ry="7"/>
+            <circle class="fact-dot dd1" cx="45" cy="52" r="3"/>
+            <circle class="fact-dot dd2" cx="60" cy="56" r="3"/>
+            <circle class="fact-dot dd3" cx="75" cy="52" r="3"/>
+            <circle class="fact-dot dd4" cx="52" cy="62" r="2.5"/>
+            <circle class="fact-dot dd5" cx="68" cy="62" r="2.5"/>
+        </svg>
+        <span class="mouth-label" id="mouth-label">DIG DEEPER</span>
+    </button>
+    <div class="deeper-results" id="deeper-results" style="display:none">
+        <div class="deeper-loading" id="deeper-loading">
+            <span class="deeper-loading-text">Pulling records…</span>
+        </div>
+        <div id="deeper-content"></div>
+    </div>
+</section>
+"""
+
+
 def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     rid         = receipt.get("receipt_id") or receipt.get("report_id", "")
     rtype       = receipt.get("receipt_type", "article_analysis")
@@ -1499,6 +1538,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
                 )
 
     claims_section_html = _claims_section_html(receipt)
+    dig_deeper_html = _dig_deeper_button_html(str(rid))
     perspectives_block_html = (
         _global_perspectives_section_html(gp_raw)
         if (rtype == "article_analysis" or gp_raw)
@@ -2091,6 +2131,171 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     opacity: 1;
   }}
 
+  .dig-deeper-section {{
+    margin: 2.5rem 0;
+    text-align: center;
+  }}
+  .mouth-btn {{
+    background: none;
+    border: 2px solid #111111;
+    border-radius: 4px;
+    padding: 1rem 2rem;
+    cursor: pointer;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.15s ease;
+    font-family: inherit;
+  }}
+  .mouth-btn:hover {{ background: #f5f2eb; }}
+  .mouth-btn.loading {{ opacity: 0.6; pointer-events: none; }}
+  .mouth-svg {{
+    width: 96px;
+    height: 48px;
+    overflow: visible;
+  }}
+  .mouth-closed {{
+    fill: #111111;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+  }}
+  .mouth-open-upper,
+  .mouth-open-lower {{
+    fill: none;
+    stroke: #111111;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    opacity: 0;
+    transition: opacity 0.2s ease 0.1s;
+  }}
+  .mouth-teeth {{
+    fill: #ffffff;
+    stroke: #111111;
+    stroke-width: 1;
+    opacity: 0;
+    transition: opacity 0.15s ease 0.15s;
+  }}
+  .mouth-tongue {{
+    fill: #cc4444;
+    opacity: 0;
+    transition: opacity 0.15s ease 0.2s;
+  }}
+  .fact-dot {{
+    fill: #111111;
+    opacity: 0;
+  }}
+  .mouth-btn.open .mouth-closed {{ opacity: 0; }}
+  .mouth-btn.open .mouth-open-upper,
+  .mouth-btn.open .mouth-open-lower,
+  .mouth-btn.open .mouth-teeth,
+  .mouth-btn.open .mouth-tongue {{ opacity: 1; }}
+  .mouth-btn.open .fact-dot {{
+    opacity: 1;
+    animation: dig-spill 0.65s ease forwards;
+  }}
+  .mouth-btn.open .fact-dot.dd1 {{ animation-delay: 0.05s; }}
+  .mouth-btn.open .fact-dot.dd2 {{ animation-delay: 0.12s; }}
+  .mouth-btn.open .fact-dot.dd3 {{ animation-delay: 0.18s; }}
+  .mouth-btn.open .fact-dot.dd4 {{ animation-delay: 0.08s; }}
+  .mouth-btn.open .fact-dot.dd5 {{ animation-delay: 0.15s; }}
+  @keyframes dig-spill {{
+    0%   {{ transform: translateY(0); opacity: 0; }}
+    35%  {{ opacity: 1; }}
+    100% {{ transform: translateY(14px); opacity: 1; }}
+  }}
+  .mouth-label {{
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    color: #111111;
+  }}
+  .deeper-results {{
+    margin-top: 1.5rem;
+    text-align: left;
+  }}
+  .deeper-loading {{
+    text-align: center;
+    padding: 2rem;
+    color: #999;
+    font-size: 0.85em;
+    letter-spacing: 0.05em;
+  }}
+  .dig-deeper-h3 {{
+    font-size: 0.75em;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #999;
+    margin-bottom: 0.75rem;
+    margin-top: 0.5rem;
+    font-weight: 600;
+  }}
+  .counter-claim-card {{
+    border-left: 3px solid #e74c3c;
+    background: #fff8f8;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border-radius: 0 4px 4px 0;
+  }}
+  .counter-claim-label {{
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #e74c3c;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }}
+  .counter-source {{
+    font-size: 0.8em;
+    color: #888;
+    margin-top: 4px;
+  }}
+  .no-primary-source {{
+    font-size: 0.75em;
+    background: #fff3cd;
+    color: #856404;
+    padding: 3px 8px;
+    border-radius: 3px;
+    display: inline-block;
+    margin-top: 4px;
+  }}
+  .unsourced-block {{
+    background: #f8f7f2;
+    border: 1px solid #e8e4dc;
+    border-radius: 4px;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+  }}
+  .unsourced-count {{
+    font-size: 1.1em;
+    font-weight: 700;
+    color: #1a1a1a;
+  }}
+  .unsourced-label {{
+    font-size: 0.8em;
+    color: #888;
+    margin-top: 2px;
+  }}
+  .crime-taxonomy-section {{ margin-bottom: 1.5rem; }}
+  .crime-row {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid #f0ede6;
+    font-size: 0.85em;
+  }}
+  .crime-type {{ flex: 1; color: #333; }}
+  .crime-bar-wrap {{ flex: 2; background: #eee; border-radius: 2px; height: 6px; }}
+  .crime-bar {{ height: 6px; border-radius: 2px; background: #111111; }}
+  .crime-count {{ min-width: 40px; text-align: right; color: #888; font-size: 0.9em; }}
+  .court-case-link {{
+    color: #2c3e50;
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }}
+
   .named-entities-section {{
     margin: 2em 0 3em;
   }}
@@ -2258,6 +2463,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 {claims_section_html}
 
+{dig_deeper_html}
+
 {named_entities_html}
 
 <!-- CROSS-CORROBORATED -->
@@ -2379,6 +2586,121 @@ function toggleChain(id) {{
       publicEyeInvestigate(input.value);
     }});
   }}
+}})();
+</script>
+<script>
+(function() {{
+  var cache = {{}};
+  function escapeHtml(s) {{
+    if (s == null) return '';
+    var d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }}
+  function escapeAttr(s) {{
+    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  }}
+  function renderDeeperResults(data) {{
+    var html = '';
+    var i, j;
+    if (data.counter_claims && data.counter_claims.length) {{
+      html += '<h3 class="dig-deeper-h3">Counter-claims from opposing outlets</h3>';
+      for (i = 0; i < data.counter_claims.length; i++) {{
+        var cc = data.counter_claims[i];
+        var sourceHtml = cc.source ? '<span class="counter-source">Source: ' + escapeHtml(cc.source) + '</span>' : '';
+        var noSrc = !cc.has_primary_source ? '<span class="no-primary-source">⚠ No primary source cited</span>' : '';
+        html += '<div class="counter-claim-card"><div class="counter-claim-label">Counter-claim</div><div>' + escapeHtml(cc.claim) + '</div>' + sourceHtml + noSrc + '</div>';
+      }}
+    }}
+    if (data.unsourced_patterns && data.unsourced_patterns.length) {{
+      html += '<h3 class="dig-deeper-h3">Unsourced claim patterns</h3>';
+      for (i = 0; i < data.unsourced_patterns.length; i++) {{
+        var p = data.unsourced_patterns[i];
+        var oc = p.outlet_count != null ? p.outlet_count : 0;
+        var sc = p.sources_citing != null ? p.sources_citing : 0;
+        var scLabel = sc === 0 ? '0 cited a primary source' : (sc + ' cited a source');
+        html += '<div class="unsourced-block"><div class="unsourced-count">' + oc + ' outlets</div><div style="font-size:0.9em;margin:4px 0;">&ldquo;' + escapeHtml(p.claim) + '&rdquo;</div><div class="unsourced-label">repeated this claim — ' + scLabel + '</div></div>';
+      }}
+    }}
+    if (data.crime_taxonomy && data.crime_taxonomy.length) {{
+      var maxCr = 0;
+      for (i = 0; i < data.crime_taxonomy.length; i++) {{
+        if (data.crime_taxonomy[i].count > maxCr) maxCr = data.crime_taxonomy[i].count;
+      }}
+      if (maxCr < 1) maxCr = 1;
+      html += '<h3 class="dig-deeper-h3">Case type breakdown</h3><div class="crime-taxonomy-section">';
+      for (i = 0; i < data.crime_taxonomy.length; i++) {{
+        var row = data.crime_taxonomy[i];
+        var pct = Math.round((row.count / maxCr) * 100);
+        html += '<div class="crime-row"><span class="crime-type">' + escapeHtml(row.type) + '</span><div class="crime-bar-wrap"><div class="crime-bar" style="width:' + pct + '%"></div></div><span class="crime-count">' + escapeHtml(String(row.count)) + '</span></div>';
+      }}
+      html += '</div>';
+    }}
+    if (data.court_records && data.court_records.length) {{
+      html += '<h3 class="dig-deeper-h3">Court records — named persons</h3>';
+      for (i = 0; i < data.court_records.length; i++) {{
+        var rec = data.court_records[i];
+        html += '<div class="claim-card" style="margin-bottom:10px;"><div class="claim-header"><span style="font-weight:600;">' + escapeHtml(rec.person) + '</span></div><div class="claim-rows">';
+        for (j = 0; j < rec.cases.length; j++) {{
+          var c = rec.cases[j];
+          var rawU = (c.url || '').trim();
+          if (rawU.indexOf('http') !== 0) rawU = 'https://www.courtlistener.com' + (rawU.charAt(0) === '/' ? rawU : '/' + rawU);
+          var link = rawU ? '<a href="' + escapeAttr(rawU) + '" target="_blank" rel="noopener" class="court-case-link">' + escapeHtml(c.case_name) + '</a>' : escapeHtml(c.case_name);
+          var meta = (c.court || '') + (c.date_filed ? (' · ' + c.date_filed) : '');
+          var snip = c.snippet ? '<div class="court-snippet">&ldquo;' + escapeHtml(c.snippet) + '&rdquo;</div>' : '';
+          html += '<div class="claim-row"><div class="claim-row-text">' + link + '</div><div class="counter-source">' + escapeHtml(meta) + '</div>' + snip + '</div>';
+        }}
+        html += '</div></div>';
+      }}
+    }}
+    if (!html) {{
+      html = '<p style="color:#999;font-size:.85em;padding:1rem 0;">No additional records found for this investigation.</p>';
+    }}
+    return html;
+  }}
+  var btn = document.getElementById('dig-btn');
+  var resultsDiv = document.getElementById('deeper-results');
+  var loadingDiv = document.getElementById('deeper-loading');
+  var contentDiv = document.getElementById('deeper-content');
+  var label = document.getElementById('mouth-label');
+  if (!btn || !resultsDiv || !loadingDiv || !contentDiv || !label) return;
+  btn.addEventListener('click', function() {{
+    var receiptId = btn.getAttribute('data-receipt-id') || '';
+    if (!receiptId) return;
+    if (btn.classList.contains('open')) {{
+      btn.classList.remove('open');
+      resultsDiv.style.display = 'none';
+      label.textContent = 'DIG DEEPER';
+      return;
+    }}
+    btn.classList.add('open', 'loading');
+    label.textContent = 'PULLING RECORDS…';
+    resultsDiv.style.display = 'block';
+    loadingDiv.style.display = 'block';
+    contentDiv.innerHTML = '';
+    if (cache[receiptId]) {{
+      loadingDiv.style.display = 'none';
+      contentDiv.innerHTML = renderDeeperResults(cache[receiptId]);
+      label.textContent = 'CLOSE';
+      btn.classList.remove('loading');
+      return;
+    }}
+    fetch('/v1/dig-deeper/' + encodeURIComponent(receiptId))
+      .then(function(r) {{ if (!r.ok) throw new Error('fail'); return r.json(); }})
+      .then(function(data) {{
+        cache[receiptId] = data;
+        loadingDiv.style.display = 'none';
+        contentDiv.innerHTML = renderDeeperResults(data);
+        label.textContent = 'CLOSE';
+        btn.classList.remove('loading');
+      }})
+      .catch(function() {{
+        loadingDiv.style.display = 'none';
+        contentDiv.innerHTML = '<p style="color:#999;font-size:.85em;padding:1rem;">Could not load deeper analysis. Try again.</p>';
+        btn.classList.remove('open', 'loading');
+        label.textContent = 'DIG DEEPER';
+      }});
+  }});
 }})();
 </script>
 
