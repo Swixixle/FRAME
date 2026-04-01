@@ -889,6 +889,52 @@ def _investigative_leads_section_html(gp: dict[str, Any]) -> str:
     )
 
 
+def _gp_confidence_all_zero(conf: dict[str, Any]) -> bool:
+    try:
+        pct_cited = int(conf.get("pct_directly_cited") or 0)
+        pct_inf = int(conf.get("pct_inferred") or 0)
+        pct_cons = int(conf.get("pct_consensus") or 0)
+        pct_cont = int(conf.get("pct_contested") or 0)
+    except (TypeError, ValueError):
+        return True
+    return (pct_cited + pct_inf + pct_cons + pct_cont) == 0
+
+
+def _gp_limited_coverage_block(gp: dict[str, Any]) -> str | None:
+    """Minimal card when there is no ecosystem map and confidence bars are all zero."""
+    if not isinstance(gp, dict):
+        return None
+    ecosystems = _safe_list(gp.get("ecosystems"))
+    div_pts = _safe_list(gp.get("divergence_points"))
+    consensus = _safe_list(gp.get("consensus_elements"))
+    if ecosystems or div_pts or consensus:
+        return None
+    conf = gp.get("confidence_breakdown") if isinstance(gp.get("confidence_breakdown"), dict) else {}
+    if not _gp_confidence_all_zero(conf):
+        return None
+    reasoning_s = str(gp.get("reasoning_summary", "") or "").strip()
+    claim_one = str(gp.get("claim", "") or "").strip()
+    conf_note = str(gp.get("confidence_note", "") or "").strip()
+    lead = reasoning_s or claim_one or conf_note
+    if not lead:
+        return None
+    extra = ""
+    if conf_note and conf_note != lead and conf_note not in lead:
+        extra = (
+            f'<p style="margin:12px 0 0;font-size:15px;color:#666">{_e(conf_note)}</p>'
+        )
+    return (
+        '<div class="inv-reader-soft" style="margin-bottom:32px">'
+        '<div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;'
+        'color:#555;margin-bottom:12px">Global perspectives</div>'
+        '<div class="inv-paper-card" style="padding:18px 22px;font-size:17px;line-height:1.65;color:#444">'
+        '<p style="margin:0 0 10px;font-weight:600;color:#111827">Limited global coverage</p>'
+        f'<p style="margin:0">{_e(lead)}</p>'
+        f"{extra}"
+        "</div></div>"
+    )
+
+
 def _global_perspectives_section_html(gp: dict[str, Any]) -> str:
     if not isinstance(gp, dict):
         return ""
@@ -923,6 +969,10 @@ def _global_perspectives_section_html(gp: dict[str, Any]) -> str:
         )
     if not has_main and absent:
         return ""
+
+    lim = _gp_limited_coverage_block(gp)
+    if lim is not None:
+        return lim
 
     reasoning_block = ""
     if reasoning_s:
