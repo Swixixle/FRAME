@@ -10,6 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
+from article_ingest import sanitize_title
 from receipt_store import get_homepage_stats, list_recent_article_investigations
 
 
@@ -19,12 +20,15 @@ def _e(s: Any) -> str:
 
 def _headline(rec: dict[str, Any]) -> str:
     art = rec.get("article") or {}
+    url = ""
+    if isinstance(art, dict):
+        url = str(art.get("url") or "").strip()
     if isinstance(art, dict) and art.get("title"):
-        return str(art["title"]).strip()
+        return sanitize_title(str(art["title"]).strip(), url or "")
     for k in ("article_topic", "narrative", "query"):
         v = rec.get(k)
         if v:
-            return str(v).strip()[:240]
+            return sanitize_title(str(v).strip()[:240], url or "")
     return "Untitled"
 
 

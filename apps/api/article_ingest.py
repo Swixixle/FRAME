@@ -10,6 +10,35 @@ import httpx
 from bs4 import BeautifulSoup
 
 
+def _domain_fallback_title(url: str) -> str:
+    """Readable fallback when title extraction failed or yielded junk."""
+    try:
+        domain = urlparse(url).netloc
+        domain = domain.replace("www.", "")
+        name = domain.split(".")[0].title() if domain else "Source"
+        return f"Investigation — {name}"
+    except Exception:  # noqa: BLE001
+        return "Untitled investigation"
+
+
+def sanitize_title(raw_title: str | None, url: str) -> str:
+    """Clean display title; reject site-suffix-only junk (e.g. '- YouTube')."""
+    if not raw_title or not str(raw_title).strip():
+        return _domain_fallback_title(url)
+
+    cleaned = str(raw_title).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    if re.match(r"^[-|·•]\s*\w", cleaned):
+        return _domain_fallback_title(url)
+    if len(cleaned) < 8 and re.search(
+        r"(youtube|cnn|bbc|reuters|twitter|facebook)", cleaned, re.I
+    ):
+        return _domain_fallback_title(url)
+
+    return cleaned
+
+
 def fetch_article(url: str, timeout: int = 15) -> dict[str, Any]:
     """
     Fetch and clean article text from a URL.
@@ -74,7 +103,7 @@ def fetch_article(url: str, timeout: int = 15) -> dict[str, Any]:
 
     return {
         "url": url,
-        "title": title,
+        "title": sanitize_title(title, url),
         "publication": publication,
         "author": author,
         "text": text,
