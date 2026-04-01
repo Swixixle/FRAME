@@ -109,6 +109,7 @@ from claim_router import (
     route_claim as route_article_claim,
     subject_looks_like_person,
 )
+from revision_tracker import find_claim_revisions
 from comparative_coverage import (
     extract_query_terms,
     fetch_newsapi_coverage,
@@ -1935,152 +1936,208 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     )
 
     claim_results: list[dict[str, Any]] = []
-    for claim in (extracted.get("claims") or [])[:15]:
-        if not isinstance(claim, dict):
-            continue
-        adapters = route_article_claim(claim)
-        verifications: list[dict[str, Any]] = []
+    revision_checks_run = 0
+    MAX_REVISION_CHECKS = 4
+    claim_date = (
+        str(article.get("published_date") or article.get("publication_date") or "")
+        .strip()
+        or "unknown"
+    )
 
-        for adapter_name in adapters:
-            query = build_query_for_adapter(claim, adapter_name)
-            try:
-                if adapter_name == "surface":
-                    result = await asyncio.to_thread(
-                        run_surface_layer, {"narrative": query}
-                    )
-                    surface_ok = bool(
-                        result and str((result or {}).get("what") or "").strip()
-                    )
-                    verifications.append(
-                        {
-                            "adapter": "surface",
-                            "result": result,
-                            "status": "found" if surface_ok else "not_found",
-                        }
-                    )
-                elif adapter_name == "fec":
-                    verifications.append(
-                        {
-                            "adapter": "fec",
-                            "query": query,
-                            "status": "deferred",
-                            "detail": "Use GET /v1/fec-search?name=<subject> for full FEC lookup",
-                        }
-                    )
-                elif adapter_name == "congress":
-                    verifications.append(
-                        {
-                            "adapter": "congress",
-                            "query": query,
-                            "status": "deferred",
-                            "detail": "Use POST /v1/congress-votes for full legislative lookup",
-                        }
-                    )
-                elif adapter_name == "courtlistener":
-                    from adapters import courtlistener as _cl_search
+    async with httpx.AsyncClient(timeout=25) as rev_session:
+        for claim in (extracted.get("claims") or [])[:15]:
+            if not isinstance(claim, dict):
+                continue
+            adapters = route_article_claim(claim)
+            verifications: list[dict[str, Any]] = []
 
-                    ct = str(claim.get("claim_type") or "").lower()
-                    subj = str(claim.get("subject") or "").strip()
-                    if ct == "rumored":
-                        q = build_query_for_adapter(claim, "courtlistener")
-                        cl_rows = await _cl_search.search_opinions(q, limit=5)
-                        if cl_rows:
-                            first_hit = cl_rows[0]
-                            verifications.append(
-                                {
-                                    "adapter": "courtlistener",
-                                    "status": "found",
-                                    "result": {
-                                        "case_name": first_hit.get("case_name", ""),
-                                        "court": first_hit.get("court", ""),
-                                        "date_filed": first_hit.get("date_filed", ""),
-                                        "url": first_hit.get("url", ""),
-                                        "snippet": str(
-                                            first_hit.get("summary")
-                                            or first_hit.get("snippet")
-                                            or ""
-                                        )[:300],
-                                        "source_url": first_hit.get("source_url")
-                                        or first_hit.get("url")
-                                        or "",
-                                        "matches_count": len(cl_rows),
-                                    },
-                                }
-                            )
-                        else:
-                            verifications.append(
-                                {
-                                    "adapter": "courtlistener",
-                                    "status": "searched_none_found",
-                                    "result": {},
-                                }
-                            )
-                    elif subject_looks_like_person(claim) and subj:
-                        crim = await _cl_search.search_opinions(f"{subj} criminal", limit=3)
-                        civ = await _cl_search.search_opinions(subj, limit=3)
-                        merged = _merge_cl_opinion_rows(crim, civ)
-                        if merged:
-                            first_hit = merged[0]
-                            verifications.append(
-                                {
-                                    "adapter": "courtlistener",
-                                    "status": "found",
-                                    "result": {
-                                        "case_name": first_hit.get("case_name", ""),
-                                        "court": first_hit.get("court", ""),
-                                        "date_filed": first_hit.get("date_filed", ""),
-                                        "url": first_hit.get("url", ""),
-                                        "snippet": str(
-                                            first_hit.get("summary")
-                                            or first_hit.get("snippet")
-                                            or ""
-                                        )[:300],
-                                        "source_url": first_hit.get("source_url")
-                                        or first_hit.get("url")
-                                        or "",
-                                        "matches_count": len(merged),
-                                        "source": "background_check",
-                                    },
-                                }
-                            )
-                        else:
-                            verifications.append(
-                                {
-                                    "adapter": "courtlistener",
-                                    "status": "searched_none_found",
-                                    "result": {},
-                                }
-                            )
-                    else:
+            for adapter_name in adapters:
+                query = build_query_for_adapter(claim, adapter_name)
+                try:
+                    if adapter_name == "surface":
+                        result = await asyncio.to_thread(
+                            run_surface_layer, {"narrative": query}
+                        )
+                        surface_ok = bool(
+                            result and str((result or {}).get("what") or "").strip()
+                        )
                         verifications.append(
                             {
-                                "adapter": "courtlistener",
-                                "query": query,
-                                "status": "deferred",
-                                "detail": "Use POST /v1/judicial-network for full judicial lookup",
+                                "adapter": "surface",
+                                "result": result,
+                                "status": "found" if surface_ok else "not_found",
                             }
                         )
-                elif adapter_name == "actor":
-                    result = await asyncio.to_thread(run_actor_layer_fast, query)
-                    actors = result.get("actors_found") or []
+                    elif adapter_name == "fec":
+                        verifications.append(
+                            {
+                                "adapter": "fec",
+                                "query": query,
+                                "status": "deferred",
+                                "detail": "Use GET /v1/fec-search?name=<subject> for full FEC lookup",
+                            }
+                        )
+                    elif adapter_name == "congress":
+                        verifications.append(
+                            {
+                                "adapter": "congress",
+                                "query": query,
+                                "status": "deferred",
+                                "detail": "Use POST /v1/congress-votes for full legislative lookup",
+                            }
+                        )
+                    elif adapter_name == "courtlistener":
+                        from adapters import courtlistener as _cl_search
+
+                        ct = str(claim.get("claim_type") or "").lower()
+                        subj = str(claim.get("subject") or "").strip()
+                        if ct == "rumored":
+                            q = build_query_for_adapter(claim, "courtlistener")
+                            cl_rows = await _cl_search.search_opinions(q, limit=5)
+                            if cl_rows:
+                                first_hit = cl_rows[0]
+                                verifications.append(
+                                    {
+                                        "adapter": "courtlistener",
+                                        "status": "found",
+                                        "result": {
+                                            "case_name": first_hit.get("case_name", ""),
+                                            "court": first_hit.get("court", ""),
+                                            "date_filed": first_hit.get("date_filed", ""),
+                                            "url": first_hit.get("url", ""),
+                                            "snippet": str(
+                                                first_hit.get("summary")
+                                                or first_hit.get("snippet")
+                                                or ""
+                                            )[:300],
+                                            "source_url": first_hit.get("source_url")
+                                            or first_hit.get("url")
+                                            or "",
+                                            "matches_count": len(cl_rows),
+                                        },
+                                    }
+                                )
+                            else:
+                                verifications.append(
+                                    {
+                                        "adapter": "courtlistener",
+                                        "status": "searched_none_found",
+                                        "result": {},
+                                    }
+                                )
+                        elif subject_looks_like_person(claim) and subj:
+                            crim = await _cl_search.search_opinions(f"{subj} criminal", limit=3)
+                            civ = await _cl_search.search_opinions(subj, limit=3)
+                            merged = _merge_cl_opinion_rows(crim, civ)
+                            if merged:
+                                first_hit = merged[0]
+                                verifications.append(
+                                    {
+                                        "adapter": "courtlistener",
+                                        "status": "found",
+                                        "result": {
+                                            "case_name": first_hit.get("case_name", ""),
+                                            "court": first_hit.get("court", ""),
+                                            "date_filed": first_hit.get("date_filed", ""),
+                                            "url": first_hit.get("url", ""),
+                                            "snippet": str(
+                                                first_hit.get("summary")
+                                                or first_hit.get("snippet")
+                                                or ""
+                                            )[:300],
+                                            "source_url": first_hit.get("source_url")
+                                            or first_hit.get("url")
+                                            or "",
+                                            "matches_count": len(merged),
+                                            "source": "background_check",
+                                        },
+                                    }
+                                )
+                            else:
+                                verifications.append(
+                                    {
+                                        "adapter": "courtlistener",
+                                        "status": "searched_none_found",
+                                        "result": {},
+                                    }
+                                )
+                        else:
+                            verifications.append(
+                                {
+                                    "adapter": "courtlistener",
+                                    "query": query,
+                                    "status": "deferred",
+                                    "detail": "Use POST /v1/judicial-network for full judicial lookup",
+                                }
+                            )
+                    elif adapter_name == "actor":
+                        result = await asyncio.to_thread(run_actor_layer_fast, query)
+                        actors = result.get("actors_found") or []
+                        verifications.append(
+                            {
+                                "adapter": "actor_ledger",
+                                "result": result,
+                                "status": "found" if actors else "not_found",
+                            }
+                        )
+                except Exception as exc:  # noqa: BLE001
                     verifications.append(
                         {
-                            "adapter": "actor_ledger",
-                            "result": result,
-                            "status": "found" if actors else "not_found",
+                            "adapter": adapter_name,
+                            "status": "error",
+                            "detail": str(exc),
                         }
                     )
-            except Exception as exc:  # noqa: BLE001
-                verifications.append(
-                    {
-                        "adapter": adapter_name,
-                        "status": "error",
-                        "detail": str(exc),
-                    }
-                )
 
-        claim_results.append(
-            {
+            subject = str(claim.get("subject") or "")
+            claim_text = str(claim.get("claim") or "")
+            claim_type = str(claim.get("claim_type") or "").lower()
+            should_check_revisions = (
+                claim_type in ("institutional", "biographical")
+                and bool(subject.strip())
+                and len(subject.split()) <= 3
+                and not any(
+                    org in subject.lower()
+                    for org in (
+                        "department",
+                        "agency",
+                        "doj",
+                        "fbi",
+                        "pentagon",
+                        "administration",
+                        "committee",
+                        "corporation",
+                    )
+                )
+                and len(claim_text) > 30
+            )
+            revisions: list[dict[str, Any]] = []
+            if should_check_revisions and revision_checks_run < MAX_REVISION_CHECKS:
+                revision_checks_run += 1
+                try:
+                    revisions = await asyncio.wait_for(
+                        find_claim_revisions(
+                            subject=subject,
+                            claim_text=claim_text,
+                            claim_date=claim_date,
+                            session=rev_session,
+                        ),
+                        timeout=20.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[REVISION] Timeout for subject %r — skipping", subject)
+                    revisions = []
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[REVISION] check failed for %s: %s", subject, exc)
+                    revisions = []
+                if revisions:
+                    logger.info(
+                        "[REVISION] Found %s revision(s) for %r",
+                        len(revisions),
+                        subject,
+                    )
+
+            claim_row: dict[str, Any] = {
                 "claim": claim.get("claim"),
                 "subject": claim.get("subject"),
                 "claim_type": claim.get("claim_type"),
@@ -2090,7 +2147,9 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
                 "adapters_checked": adapters,
                 "verifications": verifications,
             }
-        )
+            if revisions:
+                claim_row["revisions"] = revisions
+            claim_results.append(claim_row)
 
     adapter_names: list[str] = []
     seen_ad: set[str] = set()

@@ -32,6 +32,15 @@ _SKIP_VERIFICATION_ADAPTERS = frozenset({"actor_ledger"})
 _GOOGLE_NEWS_SEARCH = "https://news.google.com/search?q="
 _WIKI_SEARCH = "https://en.wikipedia.org/wiki/Special:Search?search="
 
+REVISION_TYPES: dict[str, tuple[str, str, str]] = {
+    "REVERSED": ("REVERSED", "#b71c1c", "#ffebee"),
+    "SOFTENED": ("SOFTENED", "#e65100", "#fff3e0"),
+    "STRENGTHENED": ("STRENGTHENED", "#1b5e20", "#e8f5e9"),
+    "CLARIFIED": ("CLARIFIED", "#0d47a1", "#e3f2fd"),
+    "CONTRADICTED": ("CONTRADICTED BY RECORD", "#4a148c", "#f3e5f5"),
+    "UNKNOWN": ("CHANGED", "#555", "#f5f5f5"),
+}
+
 OUTLET_HOMEPAGES: dict[str, str] = {
     "AP News": "https://apnews.com",
     "Reuters": "https://www.reuters.com",
@@ -1181,6 +1190,94 @@ def _build_verification_rows(claim: dict[str, Any]) -> str:
     return '<div class="verification-list">' + "".join(rows) + "</div>"
 
 
+def _revision_trail_html(revisions: list[Any]) -> str:
+    """Side-by-side BEFORE → AFTER for claim revision tracking (signed receipt)."""
+    if not revisions:
+        return ""
+
+    items: list[str] = []
+    for rev in revisions:
+        if not isinstance(rev, dict):
+            continue
+        rev_raw = str(rev.get("revision_type") or "UNKNOWN").strip().upper()
+        if "CONTRADICTED" in rev_raw:
+            rev_type = "CONTRADICTED"
+        else:
+            rev_type = rev_raw
+        label, color, bg = REVISION_TYPES.get(
+            rev_type, ("CHANGED", "#555", "#f5f5f5")
+        )
+
+        orig_claim = rev.get("original_claim", "")
+        orig_date = rev.get("original_date", "unknown")
+        orig_url = str(rev.get("original_url") or "").strip()
+        orig_source = rev.get("original_source", "")
+        rev_claim = rev.get("revised_claim", "")
+        rev_date = rev.get("revised_date", "")
+        rev_url = str(rev.get("revised_url") or "").strip()
+        rev_source = str(rev.get("revised_source") or "").strip()
+        gap = rev.get("gap_description", "")
+        significance = rev.get("significance", "")
+
+        orig_link = (
+            f'<a href="{_e(orig_url)}" target="_blank" rel="noopener" '
+            f'class="revision-source-link">{_e(orig_source)}</a>'
+            if orig_url else _e(orig_source or "unknown source")
+        )
+
+        rev_after_attr = ""
+        if rev_url:
+            rev_after_attr = (
+                f'<div class="revision-attribution">— '
+                f'<a href="{_e(rev_url)}" target="_blank" rel="noopener" '
+                f'class="revision-source-link">{_e(rev_source or "source")}</a></div>'
+            )
+        elif rev_source:
+            rev_after_attr = f'<div class="revision-attribution">— {_e(rev_source)}</div>'
+
+        gap_html = f'<span class="revision-gap">{_e(gap)}</span>' if gap else ""
+        sig_html = (
+            f'<div class="revision-significance">{_e(significance)}</div>'
+            if significance
+            else ""
+        )
+
+        items.append(
+            f'<div class="revision-item">'
+            f'<div class="revision-header">'
+            f'<span class="revision-badge" style="background:{bg};color:{color};">'
+            f"{_e(label)}</span>{gap_html}</div>"
+            f'<div class="revision-timeline">'
+            f'<div class="revision-before">'
+            f'<span class="revision-date-label">BEFORE</span>'
+            f'<span class="revision-date">{_e(orig_date)}</span>'
+            f'<div class="revision-claim-text">"{_e(orig_claim)}"</div>'
+            f'<div class="revision-attribution">— {orig_link}</div>'
+            f"</div>"
+            f'<div class="revision-arrow">→</div>'
+            f'<div class="revision-after">'
+            f'<span class="revision-date-label">AFTER</span>'
+            f'<span class="revision-date">{_e(rev_date)}</span>'
+            f'<div class="revision-claim-text">"{_e(rev_claim)}"</div>'
+            f"{rev_after_attr}"
+            f"</div></div>"
+            f"{sig_html}"
+            f"</div>"
+        )
+
+    n = len(items)
+    if not n:
+        return ""
+    label_plural = "change" if n == 1 else "changes"
+    return (
+        f'<div class="revision-trail">'
+        f'<div class="revision-trail-label">'
+        f"REVISION TRAIL — {n} {label_plural} detected"
+        f"</div>"
+        f'{"".join(items)}</div>'
+    )
+
+
 def _claims_section_html(receipt: dict[str, Any]) -> str:
     claims_in = _safe_list(receipt.get("claims_verified"))
     if not claims_in:
@@ -1300,6 +1397,11 @@ def _claims_section_html(receipt: dict[str, Any]) -> str:
                 )
 
             verif_rows = _build_verification_rows(c)
+            rev_raw = c.get("revisions")
+            revisions_list = rev_raw if isinstance(rev_raw, list) else []
+            revision_html = (
+                _revision_trail_html(revisions_list) if revisions_list else ""
+            )
             row_cls = "claim-row claim-row-rumored" if ctype_l == "rumored" else "claim-row"
             claim_rows.append(
                 f'<div class="{row_cls}">'
@@ -1307,6 +1409,7 @@ def _claims_section_html(receipt: dict[str, Any]) -> str:
                 f"{cited_html}"
                 f"{rumor_html}"
                 f'<div class="claim-verification-wrap">{verif_rows}</div>'
+                f"{revision_html}"
                 f"</div>"
             )
 
@@ -2278,6 +2381,116 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   }}
   .claim-verification-wrap {{
     margin-top: 8px;
+  }}
+  .revision-trail {{
+    margin-top: 10px;
+    border-top: 1px solid #e8e4dc;
+    padding-top: 10px;
+  }}
+  .revision-trail-label {{
+    font-size: 0.68em;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #888;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }}
+  .revision-item {{
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+    border: 1px solid #e8e4dc;
+  }}
+  .revision-header {{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 10px;
+    background: #f8f7f2;
+    border-bottom: 1px solid #e8e4dc;
+  }}
+  .revision-badge {{
+    font-size: 0.65em;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+  }}
+  .revision-gap {{
+    font-size: 0.75em;
+    color: #888;
+    font-style: italic;
+  }}
+  .revision-timeline {{
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }}
+  .revision-before,
+  .revision-after {{
+    flex: 1;
+    padding: 10px 12px;
+  }}
+  .revision-before {{
+    border-right: 1px solid #e8e4dc;
+    background: #fffefe;
+  }}
+  .revision-after {{
+    background: #f8fff8;
+  }}
+  .revision-arrow {{
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    color: #ccc;
+    font-size: 1.2em;
+    background: #f8f7f2;
+  }}
+  .revision-date-label {{
+    display: block;
+    font-size: 0.62em;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #aaa;
+    margin-bottom: 2px;
+  }}
+  .revision-date {{
+    display: block;
+    font-size: 0.78em;
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 4px;
+  }}
+  .revision-claim-text {{
+    font-size: 0.85em;
+    color: #1a1a1a;
+    line-height: 1.5;
+    font-style: italic;
+  }}
+  .revision-attribution {{
+    font-size: 0.75em;
+    color: #888;
+    margin-top: 4px;
+  }}
+  .revision-source-link {{
+    color: #1a1a1a;
+    text-decoration: underline;
+    text-decoration-color: #ccc;
+  }}
+  .revision-source-link:hover {{ text-decoration-color: #1a1a1a; }}
+  .revision-significance {{
+    padding: 6px 12px 8px;
+    font-size: 0.78em;
+    color: #666;
+    background: #fafafa;
+    border-top: 1px solid #f0ede6;
+    line-height: 1.5;
+  }}
+  @media (max-width: 600px) {{
+    .revision-timeline {{ flex-direction: column; }}
+    .revision-before {{ border-right: none; border-bottom: 1px solid #e8e4dc; }}
+    .revision-arrow {{ display: none; }}
   }}
   .verification-list {{
     margin-top: 6px;
