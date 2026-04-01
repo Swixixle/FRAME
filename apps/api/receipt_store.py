@@ -721,7 +721,72 @@ def ensure_drift_tables() -> None:
                 )
                 """
             )
+            cur.execute(
+                """
+                ALTER TABLE drift_schedule
+                ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                """
+            )
+            try:
+                cur.execute(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_drift_snap_receipt_checkpoint
+                    ON drift_snapshots(original_receipt_id, hours_since_original)
+                    """
+                )
+            except Exception:  # noqa: BLE001 — duplicate legacy rows prevent unique index
+                pass
         conn.commit()
+    finally:
+        conn.close()
+
+
+def list_drift_schedule() -> list[dict[str, Any]]:
+    """
+    All rows in drift_schedule (journalists who clicked "Track this story").
+    Used by the cron job to find receipts eligible for 24h/7d/30d snapshots.
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT receipt_id, article_url, created_at, scheduled_at, next_check_at
+                FROM drift_schedule
+                ORDER BY scheduled_at ASC
+                """
+            )
+            rows = cur.fetchall()
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            for k in ("created_at", "scheduled_at", "next_check_at"):
+                ts = d.get(k)
+                if hasattr(ts, "isoformat"):
+                    d[k] = ts.isoformat()
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+
+def drift_snapshot_exists_for_checkpoint(original_receipt_id: str, hours_checkpoint: int) -> bool:
+    """True if a snapshot already exists for this milestone (24 / 168 / 720)."""
+    rid = (original_receipt_id or "").strip()
+    if not rid:
+        return False
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT 1 FROM drift_snapshots
+                WHERE original_receipt_id = %s AND hours_since_original = %s
+                LIMIT 1
+                """,
+                (rid, hours_checkpoint),
+            )
+            return cur.fetchone() is not None
     finally:
         conn.close()
 

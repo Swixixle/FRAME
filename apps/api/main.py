@@ -118,6 +118,7 @@ from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
 from receipt_store import (
     ensure_coalition_maps_table,
+    drift_snapshot_exists_for_checkpoint,
     ensure_drift_tables,
     ensure_media_axis_table,
     ensure_outlet_dossiers_table,
@@ -127,6 +128,7 @@ from receipt_store import (
     get_coalition_map,
     get_receipt as load_stored_receipt,
     insert_drift_snapshot,
+    list_drift_schedule,
     list_drift_snapshots,
     list_recent_receipts,
     schedule_drift_analysis,
@@ -1251,6 +1253,77 @@ def _classify_actor_entity(name: str) -> str:
     return "org"
 
 
+def _hours_since_original_analysis(receipt: dict[str, Any]) -> float:
+    """Wall-clock hours since the investigation receipt was generated."""
+    gen = receipt.get("generated_at") or receipt.get("timestamp")
+    if not gen:
+        return 0.0
+    try:
+        s = str(gen).replace("Z", "+00:00")
+        t0 = datetime.fromisoformat(s)
+        if t0.tzinfo is None:
+            t0 = t0.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - t0
+        return max(0.0, delta.total_seconds() / 3600.0)
+    except Exception:
+        return 0.0
+
+
+async def _run_drift_snapshot_core(
+    receipt_id: str,
+    hours_since_original: int,
+) -> dict[str, Any]:
+    """
+    Re-fetch article, comparative coverage, global perspectives; compare to stored receipt;
+    persist drift snapshot with the given hours_since_original (24/168/720 for cron, or
+    elapsed hours for manual POST /v1/drift/run).
+    """
+    from comparative_coverage import format_coverage_for_prompt, get_comparative_coverage
+
+    rid = receipt_id.strip()
+    original = await asyncio.to_thread(load_stored_receipt, rid)
+    if not original:
+        raise ValueError("Receipt not found")
+    art = original.get("article") if isinstance(original.get("article"), dict) else {}
+    url = str(art.get("url") or "").strip()
+    if not url.startswith("http"):
+        raise ValueError("No article URL")
+
+    article = await asyncio.to_thread(fetch_article, url)
+    if article.get("fetch_error"):
+        raise ValueError(str(article.get("fetch_error")))
+
+    ne = original.get("named_entities")
+    if not isinstance(ne, list):
+        ne = []
+    topic = original.get("article_topic")
+
+    def _fresh_gp() -> dict[str, Any]:
+        art_in = {
+            **article,
+            "named_entities": [str(x) for x in ne if isinstance(x, str) and str(x).strip()],
+            "article_topic": topic,
+        }
+        cov = get_comparative_coverage(art_in)
+        cc = format_coverage_for_prompt(cov) if cov.get("coverage_found") else ""
+        narrative = (str(topic or "").strip() or str(article.get("title") or "").strip())
+        return run_global_perspectives(narrative, cc)
+
+    gp_new = await asyncio.to_thread(_fresh_gp)
+    new_receipt = {**original, "global_perspectives": gp_new}
+    drift = compute_drift(original, new_receipt)
+
+    await asyncio.to_thread(
+        insert_drift_snapshot,
+        rid,
+        None,
+        url,
+        hours_since_original,
+        drift,
+    )
+    return {"ok": True, "hours_since_original": hours_since_original, "drift": drift}
+
+
 @app.post("/v1/schedule-drift/{receipt_id}")
 async def schedule_drift_endpoint(receipt_id: str) -> dict[str, Any]:
     """Register article URL for drift tracking (worker / manual run can consume)."""
@@ -1278,63 +1351,81 @@ async def drift_run_snapshot_endpoint(receipt_id: str) -> dict[str, Any]:
     On-demand drift snapshot: re-run comparative coverage + global perspectives,
     compare to stored receipt, persist row (manual substitute for scheduled worker).
     """
-    from comparative_coverage import format_coverage_for_prompt, get_comparative_coverage
-
     rid = receipt_id.strip()
     original = await asyncio.to_thread(load_stored_receipt, rid)
     if not original:
         raise HTTPException(status_code=404, detail="Receipt not found")
-    art = original.get("article") if isinstance(original.get("article"), dict) else {}
-    url = str(art.get("url") or "").strip()
-    if not url.startswith("http"):
-        raise HTTPException(status_code=400, detail="No article URL")
+    hours = int(_hours_since_original_analysis(original))
+    try:
+        return await _run_drift_snapshot_core(rid, max(0, hours))
+    except ValueError as exc:
+        msg = str(exc)
+        if "not found" in msg.lower():
+            raise HTTPException(status_code=404, detail=msg) from exc
+        raise HTTPException(status_code=422, detail=msg) from exc
 
-    article = await asyncio.to_thread(fetch_article, url)
-    if article.get("fetch_error"):
-        raise HTTPException(status_code=422, detail=str(article.get("fetch_error")))
 
-    ne = original.get("named_entities")
-    if not isinstance(ne, list):
-        ne = []
-    topic = original.get("article_topic")
+@app.get("/v1/cron/drift")
+async def cron_drift(
+    x_cron_secret: str | None = Header(default=None, alias="x-cron-secret"),
+) -> dict[str, Any]:
+    """
+    Called by Render cron (curl). Processes drift_schedule: for each tracked receipt,
+    runs milestone snapshots at 24h, 7d (168h), and 30d (720h) when elapsed time
+    has crossed each threshold and that milestone is not already stored.
+    """
+    cron_secret = (os.environ.get("CRON_SECRET") or "").strip()
+    if cron_secret and (x_cron_secret or "").strip() != cron_secret:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    def _fresh_gp() -> dict[str, Any]:
-        art_in = {
-            **article,
-            "named_entities": [str(x) for x in ne if isinstance(x, str) and str(x).strip()],
-            "article_topic": topic,
-        }
-        cov = get_comparative_coverage(art_in)
-        cc = format_coverage_for_prompt(cov) if cov.get("coverage_found") else ""
-        narrative = (str(topic or "").strip() or str(article.get("title") or "").strip())
-        return run_global_perspectives(narrative, cc)
+    checkpoints = (24, 168, 720)
+    results: dict[str, Any] = {
+        "checked": 0,
+        "ran": 0,
+        "errors": 0,
+    }
+    details: list[dict[str, Any]] = []
 
-    gp_new = await asyncio.to_thread(_fresh_gp)
-    new_receipt = {**original, "global_perspectives": gp_new}
-    drift = compute_drift(original, new_receipt)
+    scheduled = await asyncio.to_thread(list_drift_schedule)
 
-    gen = original.get("generated_at") or original.get("timestamp")
-    hours = 0
-    if gen:
-        try:
-            s = str(gen).replace("Z", "+00:00")
-            t0 = datetime.fromisoformat(s)
-            if t0.tzinfo is None:
-                t0 = t0.replace(tzinfo=timezone.utc)
-            delta = datetime.now(timezone.utc) - t0
-            hours = max(0, int(delta.total_seconds() // 3600))
-        except Exception:
-            hours = 0
+    for item in scheduled:
+        receipt_id = str(item.get("receipt_id") or "").strip()
+        if not receipt_id:
+            continue
+        results["checked"] += 1
+        original = await asyncio.to_thread(load_stored_receipt, receipt_id)
+        if not original:
+            continue
+        hours_since = _hours_since_original_analysis(original)
 
-    await asyncio.to_thread(
-        insert_drift_snapshot,
-        rid,
-        None,
-        url,
-        hours,
-        drift,
-    )
-    return {"ok": True, "hours_since_original": hours, "drift": drift}
+        for cp in checkpoints:
+            if hours_since < cp:
+                continue
+            exists = await asyncio.to_thread(
+                drift_snapshot_exists_for_checkpoint,
+                receipt_id,
+                cp,
+            )
+            if exists:
+                continue
+            try:
+                await _run_drift_snapshot_core(receipt_id, cp)
+                results["ran"] += 1
+                logger.info("[CRON_DRIFT] Ran %sh snapshot for %s", cp, receipt_id)
+            except Exception as exc:  # noqa: BLE001
+                results["errors"] += 1
+                logger.exception("[CRON_DRIFT] Error on %s at %sh", receipt_id, cp)
+                details.append(
+                    {
+                        "receipt_id": receipt_id,
+                        "checkpoint_hours": cp,
+                        "error": str(exc),
+                    }
+                )
+
+    results["details"] = details
+    logger.info("[CRON_DRIFT] Done: checked=%s ran=%s errors=%s", results["checked"], results["ran"], results["errors"])
+    return results
 
 
 @app.get("/v1/actors/{receipt_id}")
