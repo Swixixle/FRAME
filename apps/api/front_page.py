@@ -28,6 +28,78 @@ def _headline(rec: dict[str, Any]) -> str:
     return "Untitled"
 
 
+def _vol_copy(score: Any) -> str:
+    """Volatility label for search / UI (0–100 scale)."""
+    if score is None:
+        return ""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return ""
+    if s >= 66:
+        return "Parallel realities."
+    if s >= 33:
+        return "Contested."
+    return "Calm."
+
+
+def _unique_countries_from_position(pos: dict[str, Any] | None) -> int:
+    if not isinstance(pos, dict):
+        return 0
+    countries: set[str] = set()
+    for link in pos.get("chain") or []:
+        if not isinstance(link, dict):
+            continue
+        c = str(link.get("country") or link.get("outlet_country") or "").strip().lower()
+        if c:
+            countries.add(c)
+    for src in pos.get("anchor_outlets") or []:
+        if isinstance(src, dict):
+            c = str(src.get("country") or src.get("outlet_country") or "").strip().lower()
+            if c:
+                countries.add(c)
+    return len(countries)
+
+
+def _coalition_preview(coalition: dict[str, Any]) -> dict[str, int]:
+    """Outlet and country counts for coalition cards (search + spec)."""
+    if not coalition:
+        return {"a_count": 0, "b_count": 0, "a_countries": 0, "b_countries": 0}
+    a_count = int(coalition.get("position_a_outlet_count") or 0)
+    b_count = int(coalition.get("position_b_outlet_count") or 0)
+    pa = coalition.get("position_a")
+    pb = coalition.get("position_b")
+    if isinstance(pa, dict) and a_count == 0:
+        a_count = len(pa.get("chain") or []) or len(pa.get("anchor_outlets") or [])
+    if isinstance(pb, dict) and b_count == 0:
+        b_count = len(pb.get("chain") or []) or len(pb.get("anchor_outlets") or [])
+    a_count = max(a_count, len(coalition.get("position_a_sources") or []))
+    b_count = max(b_count, len(coalition.get("position_b_sources") or []))
+    a_countries = _unique_countries_from_position(pa if isinstance(pa, dict) else None)
+    b_countries = _unique_countries_from_position(pb if isinstance(pb, dict) else None)
+    for key, target in (
+        ("position_a_country_count", "a"),
+        ("position_b_country_count", "b"),
+    ):
+        raw = coalition.get(key)
+        if raw is None:
+            continue
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if target == "a" and a_countries == 0:
+            a_countries = n
+        elif target == "b" and b_countries == 0:
+            b_countries = n
+    return {
+        "a_count": a_count,
+        "b_count": b_count,
+        "a_countries": a_countries,
+        "b_countries": b_countries,
+    }
+
+
 def vol_color(vol: int) -> str:
     if vol <= 25:
         return "#2e7d32"
