@@ -2781,6 +2781,46 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     font-size:18px;
     background:#F7F4EF;color:#1a1a1a;min-height:100vh;
   }}
+  .inv-page-wrap{{
+    max-width:1280px;margin:0 auto;padding:0 36px 48px;
+  }}
+  .inv-hook-band{{
+    padding:40px 0 24px;
+  }}
+  .inv-bilateral{{
+    display:grid;
+    grid-template-columns:1fr 340px;
+    gap:0 32px;
+    align-items:start;
+  }}
+  .inv-col-main{{
+    min-width:0;
+  }}
+  .inv-col-side{{
+    min-width:0;
+    position:sticky;
+    top:72px;
+    max-height:calc(100vh - 90px);
+    overflow-y:auto;
+    scrollbar-width:none;
+  }}
+  .inv-col-side::-webkit-scrollbar{{display:none;}}
+  .inv-full-width{{
+    margin-top:8px;
+  }}
+  @media(max-width:900px){{
+    .inv-bilateral{{
+      grid-template-columns:1fr;
+    }}
+    .inv-col-side{{
+      position:static;
+      max-height:none;
+      overflow-y:visible;
+    }}
+    .inv-page-wrap{{
+      padding:0 20px 48px;
+    }}
+  }}
   a{{color:#0d47a1;text-decoration:underline;text-underline-offset:3px}}
   a:hover{{opacity:.85}}
   button:hover{{opacity:.85}}
@@ -3869,38 +3909,48 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   </div>
 </header>
 
-<div style="max-width:900px;margin:0 auto;padding:0 36px 48px">
+<div class="inv-page-wrap">
 
 <!-- HOOK -->
-<div style="padding:40px 0 24px">
+<div class="inv-hook-band">
   {f'<div style="margin-bottom:10px"><a href="{_e(a_url)}" target="_blank" rel="noopener" style="font-size:13px;letter-spacing:0.06em;text-transform:uppercase;color:#666">{_e(a_pub)} ↗</a></div>' if a_url else ""}
   <h1 style="font-family:'Playfair Display',serif;font-size:clamp(26px,4vw,38px);
               font-weight:700;line-height:1.15;letter-spacing:-0.02em;color:#1a1a1a;
-              margin-bottom:0;max-width:720px">
+              margin-bottom:0;max-width:840px">
     {_e(a_title or "Untitled Investigation")}
   </h1>
 </div>
 
 <div style="height:1px;background:rgba(26,26,26,0.2);margin-bottom:28px"></div>
 
-<!-- SUMMARY + CONTEXTUAL BRIEF -->
-{summary_block_html}
+<!-- BILATERAL COLUMNS -->
+<div class="inv-bilateral">
 
-{echo_standalone_html}
+  <!-- LEFT: primary analysis -->
+  <div class="inv-col-main">
+    {coalition_section}
+    {perspectives_block_html}
+    {absent_from_all_html}
+    {claims_section_html}
+    {coverage_block_html}
+  </div>
 
-{coalition_section}
+  <!-- RIGHT: contextual sidebar -->
+  <div class="inv-col-side">
+    {summary_block_html}
+    {echo_standalone_html}
+    {investigative_leads_html}
+    {named_entities_html}
+    {drift_section_html}
+    {actors_section_html}
+  </div>
 
-{perspectives_block_html}
+</div><!-- /.inv-bilateral -->
 
-{absent_from_all_html}
-
-{investigative_leads_html}
-
-{claims_section_html}
+<!-- FULL-WIDTH BELOW THE FOLD -->
+<div class="inv-full-width">
 
 {dig_deeper_html}
-
-{named_entities_html}
 
 <!-- CROSS-CORROBORATED -->
 {f'<div class="reporter-only" style="margin-bottom:32px"><div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#555;margin-bottom:12px">Cross-corroborated</div><div class="inv-paper-card" style="padding:4px 18px">{confirmed_html}</div></div>' if confirmed_html else ""}
@@ -3909,13 +3959,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 {reporter_strip}
 
-{coverage_block_html}
-
 {sources_section_html}
-
-{drift_section_html}
-
-{actors_section_html}
 
 <!-- VERIFICATION (reader: one-line access) -->
 <div id="verification" class="inv-reader-soft" style="margin-bottom:28px;padding:16px 18px;background:#fff;border:1px solid rgba(26,26,26,0.12);border-radius:6px">
@@ -3971,7 +4015,9 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   <a href="/verify?id={_e(rid)}" class="reporter-only" style="font-size:13px;color:#666;text-decoration:none">Independent verification ↗</a>
 </div>
 
-</div>
+</div><!-- /.inv-full-width -->
+
+</div><!-- /.inv-page-wrap -->
 
 <script>
 function toggleWhyNumber() {{
