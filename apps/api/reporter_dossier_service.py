@@ -10,6 +10,11 @@ from typing import Any
 
 from receipt_store import get_stored_reporter_dossier, upsert_reporter_dossier
 
+from services.proportionality_client import (
+    fetch_proportionality_packet,
+    proportionality_fetch_params_dict,
+)
+
 
 def reporter_slug(name: str) -> str:
     s = (name or "").lower().strip()
@@ -47,6 +52,43 @@ def get_or_build_reporter_dossier(display_name: str, persist: bool = True) -> di
     if persist:
         upsert_reporter_dossier(slug, payload["name"], payload)
     return payload
+
+
+def _donation_amount_float(donation: dict[str, Any]) -> float | None:
+    amt = donation.get("amount")
+    if amt is None:
+        return None
+    try:
+        return float(amt)
+    except (TypeError, ValueError):
+        return None
+
+
+async def attach_proportionality_packets_to_fec_donations(fec_donations: list[Any] | None) -> None:
+    """
+    After OpenFEC Schedule A rows are attached to a journalist dossier, add EthicalAlt
+    proportionality context per row. Low-confidence name matches are preserved on the row.
+    """
+    if not fec_donations:
+        return
+    for donation in fec_donations:
+        if not isinstance(donation, dict):
+            continue
+        amt = _donation_amount_float(donation)
+        params = proportionality_fetch_params_dict(
+            category="political",
+            violation_type="campaign contribution",
+            charge_status=None,
+            amount_involved=amt,
+        )
+        donation["proportionality_fetch_params"] = params
+        packet = await fetch_proportionality_packet(
+            category=params["category"],
+            violation_type=params["violation_type"],
+            charge_status=params["charge_status"],
+            amount_involved=params["amount_involved"],
+        )
+        donation["proportionality_packet"] = packet
 
 
 def get_or_build_reporter_by_url_slug(url_slug: str, persist: bool = True) -> dict[str, Any]:

@@ -222,7 +222,7 @@
     return t.length <= n ? t : t.slice(0, n) + '…';
   }
 
-  fetch(API_BASE + '/v1/entity/' + encodeURIComponent(nameParam))
+  fetch(API_BASE + '/v1/entity-ledger/' + encodeURIComponent(nameParam))
     .then(function (r) {
       if (!r.ok) throw new Error(r.status === 404 ? 'No ledger entries for this entity yet.' : 'HTTP ' + r.status);
       return r.json();

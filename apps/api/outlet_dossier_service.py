@@ -1,6 +1,9 @@
 """
 Builds and caches outlet dossiers.
 Future: FEC, CourtListener, SEC, OpenCorporates. For now: stub payload suitable for API contract.
+
+Article investigations attach live proportionality context on `outlet_dossier_article.enrich_outlet_dossier_for_article`
+(CourtListener + Meta triggers, EthicalAlt `/proportionality` via `services.proportionality_client`).
 """
 
 from __future__ import annotations
@@ -58,6 +61,7 @@ def build_outlet_dossier(outlet_name: str) -> dict[str, Any]:
             "Per-story positions come from proximity to the verifiable record only."
         ),
         "recent_investigations": [],
+        "proportionality_records": [],
         "dossier_generated_at": now,
         "signed": False,
         "sources_used": [],

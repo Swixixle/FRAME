@@ -49,6 +49,9 @@ services:
         sync: false
       - key: COURTLISTENER_API_KEY
         sync: false
+      - key: PROPORTIONALITY_API_URL
+        value: https://ethicalalt-api.onrender.com
+        sync: false
       - key: GOVINFO_API_KEY
         sync: false
       - key: CONGRESS_API_KEY

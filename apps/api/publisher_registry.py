@@ -14,14 +14,29 @@ KNOWN_PUBLISHERS: dict[str, dict[str, str]] = {
     "pbs.org": {"name": "PBS", "type": "public_broadcaster", "country": "US"},
     "wnyc.org": {"name": "WNYC", "type": "public_broadcaster", "country": "US"},
     "wbur.org": {"name": "WBUR", "type": "public_broadcaster", "country": "US"},
-    "cnn.com": {"name": "CNN", "type": "cable_news", "country": "US"},
+    "cnn.com": {
+        "name": "CNN",
+        "type": "cable_news",
+        "country": "US",
+        "parent_company": "Warner Bros. Discovery",
+    },
     "foxnews.com": {"name": "Fox News", "type": "cable_news", "country": "US"},
     "msnbc.com": {"name": "MSNBC", "type": "cable_news", "country": "US"},
     "cbsnews.com": {"name": "CBS News", "type": "broadcast_news", "country": "US"},
     "abcnews.go.com": {"name": "ABC News", "type": "broadcast_news", "country": "US"},
     "nbcnews.com": {"name": "NBC News", "type": "broadcast_news", "country": "US"},
-    "nytimes.com": {"name": "The New York Times", "type": "newspaper", "country": "US"},
-    "washingtonpost.com": {"name": "The Washington Post", "type": "newspaper", "country": "US"},
+    "nytimes.com": {
+        "name": "The New York Times",
+        "type": "newspaper",
+        "country": "US",
+        "parent_company": "The New York Times Company",
+    },
+    "washingtonpost.com": {
+        "name": "The Washington Post",
+        "type": "newspaper",
+        "country": "US",
+        "parent_company": "Nash Holdings",
+    },
     "wsj.com": {"name": "The Wall Street Journal", "type": "newspaper", "country": "US"},
     "apnews.com": {"name": "Associated Press", "type": "wire_service", "country": "US"},
     "reuters.com": {"name": "Reuters", "type": "wire_service", "country": "UK"},
@@ -48,9 +63,19 @@ KNOWN_PUBLISHERS: dict[str, dict[str, str]] = {
     "latimes.com": {"name": "Los Angeles Times", "type": "newspaper", "country": "US"},
     "bostonglobe.com": {"name": "The Boston Globe", "type": "newspaper", "country": "US"},
     "chicagotribune.com": {"name": "Chicago Tribune", "type": "newspaper", "country": "US"},
-    "houstonchronicle.com": {"name": "Houston Chronicle", "type": "newspaper", "country": "US"},
+    "houstonchronicle.com": {
+        "name": "Houston Chronicle",
+        "type": "newspaper",
+        "country": "US",
+        "parent_company": "Hearst Communications",
+    },
     "startribune.com": {"name": "Star Tribune", "type": "newspaper", "country": "US"},
-    "sfchronicle.com": {"name": "San Francisco Chronicle", "type": "newspaper", "country": "US"},
+    "sfchronicle.com": {
+        "name": "San Francisco Chronicle",
+        "type": "newspaper",
+        "country": "US",
+        "parent_company": "Hearst Communications",
+    },
     "miamiherald.com": {"name": "Miami Herald", "type": "newspaper", "country": "US"},
     "denverpost.com": {"name": "The Denver Post", "type": "newspaper", "country": "US"},
     "azcentral.com": {"name": "Arizona Republic / azcentral", "type": "newspaper", "country": "US"},
@@ -91,6 +116,14 @@ def is_allowed_transcript_host(host: str) -> bool:
 def lookup_domain(domain: str) -> dict[str, str] | None:
     domain = domain.lower().replace("www.", "").strip()
     return KNOWN_PUBLISHERS.get(domain)
+
+
+def parent_company_for_domain(domain: str) -> str | None:
+    """Corporate parent when present in registry (fast path for absence/sibling logic)."""
+    pub = lookup_domain(domain or "")
+    if not pub:
+        return None
+    return pub.get("parent_company") or None
 
 
 def _norm_handle(h: str) -> str:

@@ -34,6 +34,40 @@ export async function fetchReceipt(receiptId) {
   return jsonOrThrow(res);
 }
 
+/**
+ * Investigation entity profile (Postgres). Returns { status: "pending", entity_slug } until
+ * background persistence has created a row; then { status: "ready", ...profile }.
+ */
+export async function fetchEntityProfile(slug) {
+  const s = String(slug || "").trim();
+  if (!s) return null;
+  const tryPaths = [`${base()}/api/entity/${encodeURIComponent(s)}`, `${base()}/v1/entity/${encodeURIComponent(s)}`];
+  let lastErr;
+  for (const url of tryPaths) {
+    const res = await fetch(url);
+    const text = await res.text();
+    let data = {};
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { detail: text || "Invalid response" };
+    }
+    if (res.ok) return data;
+    if (res.status === 404) {
+      lastErr = new Error("Not found");
+      continue;
+    }
+    const d = data.detail;
+    let msg;
+    if (typeof d === "string") msg = d;
+    else if (res.status >= 500)
+      msg = "Server error. Try again in a moment.";
+    else msg = "Request could not be completed. Check your input and try again.";
+    throw new Error(msg);
+  }
+  return { status: "pending", entity_slug: s };
+}
+
 export async function analyzeArticle(url) {
   const res = await fetch(`${base()}/v1/analyze-article`, {
     method: "POST",
@@ -55,6 +89,19 @@ export async function getCoalitionMap(receiptId) {
 }
 
 /** Enqueue or return existing. @returns {Promise<object|null>} full map if 200, null if 202 queued */
+/** @param {Record<string, unknown>} params */
+export async function fetchProportionalityWithGeo(params) {
+  const u = new URL(`${base()}/v1/proportionality`);
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === "") continue;
+    u.searchParams.set(k, String(v));
+  }
+  const res = await fetch(u.toString());
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data?.proportionality ?? null;
+}
+
 export async function postCoalitionMap(receiptId) {
   const res = await fetch(`${base()}/v1/coalition-map`, {
     method: "POST",

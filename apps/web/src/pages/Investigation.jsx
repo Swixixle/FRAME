@@ -6,6 +6,8 @@ import CoalitionMap from "../components/CoalitionMap.jsx";
 import CoalitionMapSkeleton from "../components/CoalitionMapSkeleton.jsx";
 import Header from "../components/Header.jsx";
 import PerspectiveClusters from "../components/PerspectiveClusters.jsx";
+import RecordSurface from "../components/RecordSurface.jsx";
+import SourcesAndActors from "../components/SourcesAndActors.jsx";
 import VerificationSidebar from "../components/VerificationSidebar.jsx";
 import { useCoalitionMapPoll } from "../hooks/useCoalitionMapPoll.js";
 import { fetchReceipt } from "../lib/api.js";
@@ -113,6 +115,8 @@ export default function Investigation({ onToast }) {
               </div>
             ) : null}
 
+            <SourcesAndActors receipt={receipt} />
+
             <h2 className="pe-section-title pe-beat-2">At a glance</h2>
             <ul className="pe-bullets-main pe-beat-2">
               <li>
@@ -137,6 +141,8 @@ export default function Investigation({ onToast }) {
                 </span>
               </li>
             </ul>
+
+            <RecordSurface receipt={receipt} />
 
             {v.globalPerspectives ? (
               <div className="pe-beat-3">

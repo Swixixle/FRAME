@@ -910,3 +910,194 @@ def list_drift_snapshots(original_receipt_id: str) -> list[dict[str, Any]]:
         return out
     finally:
         conn.close()
+
+
+def ensure_entity_profiles_tables() -> None:
+    """
+    Persistent journalist/outlet dossiers + evidence log (PUBLIC EYE entity upgrade).
+    Safe to run repeatedly.
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entity_profiles (
+                    entity_slug         TEXT PRIMARY KEY,
+                    entity_name         TEXT NOT NULL,
+                    entity_type         TEXT NOT NULL,
+                    current_affiliation TEXT,
+                    integrity_json      JSONB,
+                    contradiction_json  JSONB,
+                    funding_json        JSONB,
+                    factcheck_json      JSONB,
+                    generated_headline  TEXT,
+                    executive_summary   TEXT,
+                    the_gap             TEXT,
+                    verdict_tags        JSONB,
+                    overall_integrity   TEXT,
+                    signature           TEXT,
+                    public_key          TEXT,
+                    content_hash        TEXT,
+                    is_static           BOOLEAN DEFAULT FALSE,
+                    first_seen          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_updated        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    evidence_count      INTEGER DEFAULT 0,
+                    CONSTRAINT entity_profiles_type_check CHECK (entity_type IN (
+                        'journalist', 'commentator', 'anchor',
+                        'outlet', 'think_tank', 'podcast', 'wire_service'
+                    )),
+                    CONSTRAINT entity_profiles_integrity_check CHECK (
+                        overall_integrity IS NULL OR overall_integrity IN (
+                            'compromised', 'questionable', 'acceptable',
+                            'strong', 'insufficient_data'
+                        )
+                    )
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entity_profiles_type ON entity_profiles (entity_type)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entity_profiles_affiliation "
+                "ON entity_profiles (current_affiliation)"
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entity_evidence_log (
+                    id              BIGSERIAL PRIMARY KEY,
+                    entity_slug     TEXT NOT NULL REFERENCES entity_profiles(entity_slug)
+                        ON DELETE CASCADE,
+                    evidence_type   TEXT NOT NULL,
+                    evidence_json   JSONB NOT NULL,
+                    source_url      TEXT,
+                    article_url     TEXT,
+                    found_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    receipt_id      TEXT,
+                    CONSTRAINT entity_evidence_type_check CHECK (evidence_type IN (
+                        'statement', 'fec_donation', 'court_case',
+                        'fact_check_verdict', 'retraction', 'correction',
+                        'advertiser_relationship', 'beat_coverage', 'quote'
+                    ))
+                )
+                """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evidence_entity_type "
+                "ON entity_evidence_log (entity_slug, evidence_type)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_evidence_found_at "
+                "ON entity_evidence_log (found_at DESC)"
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_entity_profile_row(slug: str) -> dict[str, Any] | None:
+    s = (slug or "").strip()
+    if not s:
+        return None
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT * FROM entity_profiles WHERE entity_slug = %s", (s,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return dict(row)
+    finally:
+        conn.close()
+
+
+def list_entity_profile_rows(
+    *,
+    entity_type: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            lim = max(1, min(int(limit or 50), 200))
+            off = max(0, int(offset or 0))
+            if entity_type and str(entity_type).strip():
+                cur.execute(
+                    """
+                    SELECT entity_slug, entity_name, entity_type, current_affiliation,
+                           overall_integrity, generated_headline, the_gap, last_updated,
+                           evidence_count
+                    FROM entity_profiles
+                    WHERE entity_type = %s
+                    ORDER BY last_updated DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (str(entity_type).strip(), lim, off),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT entity_slug, entity_name, entity_type, current_affiliation,
+                           overall_integrity, generated_headline, the_gap, last_updated,
+                           evidence_count
+                    FROM entity_profiles
+                    ORDER BY last_updated DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (lim, off),
+                )
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def list_entity_evidence_rows(
+    slug: str,
+    *,
+    evidence_type: str | None = None,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    s = (slug or "").strip()
+    if not s:
+        return []
+    conn = _get_conn()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            lim = max(1, min(int(limit or 20), 100))
+            if evidence_type and str(evidence_type).strip():
+                cur.execute(
+                    """
+                    SELECT id, entity_slug, evidence_type, evidence_json, source_url,
+                           article_url, found_at, receipt_id
+                    FROM entity_evidence_log
+                    WHERE entity_slug = %s AND evidence_type = %s
+                    ORDER BY found_at DESC
+                    LIMIT %s
+                    """,
+                    (s, str(evidence_type).strip(), lim),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT id, entity_slug, evidence_type, evidence_json, source_url,
+                           article_url, found_at, receipt_id
+                    FROM entity_evidence_log
+                    WHERE entity_slug = %s
+                    ORDER BY found_at DESC
+                    LIMIT %s
+                    """,
+                    (s, lim),
+                )
+            rows = cur.fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                d = dict(r)
+                ts = d.get("found_at")
+                if hasattr(ts, "isoformat"):
+                    d["found_at"] = ts.isoformat()
+                out.append(d)
+            return out
+    finally:
+        conn.close()

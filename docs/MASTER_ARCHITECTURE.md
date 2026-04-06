@@ -2,6 +2,8 @@
 
 **Repository identity:** The GitHub repo and docs often say “FRAME”; the **product surface** shipped as **PUBLIC EYE**. Same codebase, same API, same receipts. This document uses **PUBLIC EYE** for the user-facing article pipeline and **FRAME** where it matches historical internal naming (receipt types, env vars, routes).
 
+**How to read this doc:** The opening sections (§1–13) are **descriptive** — what exists. Sections **Epistemic status of this document**, **Architectural invariants**, **Failure model**, and **Known debt and design rationale** (below §13) are **prescriptive and meta** — what must hold, what breaks, what we owe, and what we still owe.
+
 ---
 
 ## 1. What this is
@@ -237,6 +239,87 @@ From **`render.yaml`** and comments:
 - **`docs/CONTEXT.md`** — extended context, Citizens United milestone, Rabbit Hole.
 - **`docs/HANDOFF_SESSION.md`**, **`docs/RABBIT_HOLE_CONTEXT.md`** — session-specific depth.
 - **`.cursorrules`** — dossier stack contract for entity enrichment.
+
+---
+
+## Epistemic status of this document
+
+This architecture doc mixes **facts about the repo** with **engineering judgment**. Labels below apply to major claims.
+
+| Label | Meaning |
+|--------|--------|
+| **Observed in code** | Verified by reading `main.py`, `report_api.py`, `receipt_store.py`, and related modules; filenames and behavior refer to current implementation. |
+| **Inferred from patterns** | Product intent inferred from structure, prompts, and naming (e.g. “epistemic discipline” in contextual brief) where no single `assert` exists in code. |
+| **Intended but not fully enforced** | Stated norms (e.g. parity between Python JCS and Node `jcs-stringify`) that **should** hold for verifiers but are not continuously tested in CI as of this writing. |
+
+If a statement has no label, treat it as **observed in code** when it names a file or function; otherwise ask or verify.
+
+---
+
+## Architectural invariants (non-negotiables)
+
+These are **prescriptive**: if violated **silently**, the product’s trust model erodes without an obvious outage.
+
+1. **Signing slice is the attestation.** For `article_analysis`, only fields included in **`build_article_analysis_signing_body`** participate in **`content_hash`**. Anything else is UI or bookkeeping, not what the signature proves (see §5.2).
+
+2. **Seal fails closed.** `attach_article_analysis_signing` must **never** return **`signed: true`** without a computed hash and signature. On exception, the implementation returns **`signed: false`**, **`signing_error`**, and **no** `content_hash`/`signature` — the HTTP response still returns a receipt body so the run is not lost, but **cryptographic proof is absent** (see Failure model).
+
+3. **Uncertainty belongs in the hash or it is not sealed.** Disclaimers and model-generated blocks that are meant to be tamper-evident must be **inside the signing body** for that receipt type. Appending caveats **only** in HTML or in non-hashed JSON is **not** the same guarantee.
+
+4. **FACT and INFERRED are not fused in contextual brief output.** The contextual-brief generator and renderer are written so that **typed** lines (FACT vs INFERRED vs contradiction rows) are **separate** — not the same sentence mixing attested datum and interpretation. (Prompt + HTML structure; **inferred from patterns**.)
+
+5. **Partial beats fabricated.** If coverage, an adapter, or an LLM step fails or is empty, the pipeline should emit **explicit empties, nulls, or notes** — not invented sources, quotes, or coverage.
+
+6. **Stored receipt is the source of truth for `/i/{id}`.** The investigation page reads the **payload** returned by `get_receipt` / stored JSON. If the brief is missing there, the UI cannot show it regardless of what was returned once on the wire.
+
+7. **Dig deeper does not mutate the receipt.** `GET /v1/dig-deeper/{receipt_id}` is **read-only** with respect to the stored investigation payload; it cannot retroactively change what was signed.
+
+8. **Drift is additive diagnostics.** Drift snapshots compare **later** runs to **stored** receipts; they do not rewrite the original signed payload.
+
+9. **Verifier algorithm match.** Any **independent** verification of a receipt must use the **same** canonicalization (JCS) and **same** signing-body shape as `build_article_analysis_signing_body` for that type — otherwise “verification” is meaningless (**intended but not fully enforced** across all client implementations).
+
+---
+
+## Failure model
+
+How the **article analysis** pipeline behaves when something breaks. **Default:** degrade gracefully; **exception:** cryptographic seal.
+
+| Component / step | Typical failure | Effect on the receipt / response |
+|------------------|-----------------|-----------------------------------|
+| **fetch_article** | 422, timeout, parse error | **No receipt** — HTTP error. |
+| **extract_claims** | LLM error or empty | **Receipt may still build** with `extraction_error` / empty claims. |
+| **Per-claim adapters** (FEC, CourtListener, …) | Timeout, empty, deferred | **Claim row** shows `not_found` / `deferred` / `error` — **no global failure**. |
+| **find_claim_revisions** | Timeout | **Revision list skipped** for that claim — logged. |
+| **expand_sources / GDELT** | No coverage | **`coverage_result` reflects failure**; volatility/anchors may be null or placeholder notes. |
+| **run_global_perspectives** | Exception | **Logged**; `global_perspectives` may be missing — **analysis continues**. |
+| **generate_contextual_brief** | Empty dict or exception | **No `contextual_brief`** in payload — **analysis continues**; UI falls back to plain summary. |
+| **`attach_article_analysis_signing`** | Key load, JCS, hash, sign error | **Receipt still returned** with **`signed: false`**, **`signing_error`** — **never** a fake `signed: true`. This is the **trust-layer** failure mode: **seal fails closed**, not HTTP hard fail. |
+| **store_receipt** | DB error | **Logged**; caller may still return in-memory payload — **persistence risk** if ignored. |
+| **Coalition map** (loaded at render) | Missing or async failure | **Page renders without** coalition slab — **receipt JSON unchanged**. |
+
+**Distinction:** **Adapter/LLM** failures are **graceful degradation** of *content*. **Signing** failures are **graceful degradation** of *proof*: the user still gets a JSON payload, but **must not** treat it as cryptographically signed.
+
+---
+
+## Known debt and design rationale
+
+### Known debt
+
+| Debt | Notes |
+|------|--------|
+| **`main.py` (~6000+ lines)** | Single module holds most HTTP routes and orchestration. **Refactor path:** extract route groups (article, lens, receipts, Rabbit Hole, cron) into submodules or routers; keep **one** place that defines signing body per receipt type. |
+| **JCS parity (Python vs TypeScript)** | Production hashing uses **`jcs_canonicalize.py`** in Python. Node **`scripts/jcs-stringify.mjs`** and TS packages may still exist for legacy paths. **Risk:** byte-level mismatch if someone verifies with the wrong canonicalizer. **Mitigation:** document canonical path; CI golden test comparing Python vs Node output for fixed payloads (**intended but not fully enforced**). |
+| **Audio / long-form transcript pipeline** | README already notes uncertainty. End-to-end **article** path is the most exercised; **podcast / upload** tiers vary. |
+
+### Design rationale (why X?)
+
+| Question | Answer |
+|----------|--------|
+| **Why a monolith API?** | One deploy, one signing key story, shared Postgres and adapters. Splitting services before boundaries are stable would duplicate receipt contracts and signing. |
+| **Why hybrid Python + Node build?** | Historical: TS packages for signing/adapters; Python for heavy I/O and LLM orchestration. **render.yaml** builds both. |
+| **Why sign here (server)?** | Private key must not ship to browsers. **Verification** is public; **signing** is server-side only. |
+| **Why receipts at all?** | Immutable, shareable **artifacts** with a defined semantic slice — not a session-only chat response. |
+| **Why isn’t `echo_chamber` in the signing body?** | **Product decision / debt:** it is computed for display; it is **not** in `build_article_analysis_signing_body` today. **If** it must be sealed, add it to the builder and treat this as a **schema change** — not a silent tweak. |
 
 ---
 

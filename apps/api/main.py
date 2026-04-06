@@ -104,17 +104,42 @@ from actor_layer_api import run_actor_layer
 from actor_layer_fast import run_actor_layer_fast
 from article_ingest import fetch_article
 from claim_extractor import extract_claims
+
+# Audit spine (full rubric pending — see claim_audit_engine module docstring).
+from claim_audit_engine import (
+    AUDIT_RUBRIC_VERSION,
+    CLAIM_EXTRACTION_VERSION,
+    PARSER_EXTRACTION_VERSION,
+    build_article_omission_analysis,
+    build_audit_summary_one_liner,
+    build_audit_unknowns,
+    build_claim_audits_for_results,
+    build_source_ledger,
+    compute_article_disposition,
+)
 from claim_router import (
     build_query_for_adapter,
+    is_person_name_for_courtlistener,
     route_claim as route_article_claim,
     subject_looks_like_person,
 )
 from revision_tracker import find_claim_revisions
+from absence_signal import compute_absence_signal
 from comparative_coverage import (
     extract_query_terms,
     fetch_newsapi_coverage,
     get_comparative_coverage,
 )
+from journalist_dossier_article import build_journalist_dossier_for_article
+from outlet_dossier_article import enrich_outlet_dossier_for_article
+from reporter_dossier_service import attach_proportionality_packets_to_fec_donations
+from services.contradiction_engine import run_if_sufficient_sync
+from services.entity_persistence import (
+    compute_journalist_entity_slug,
+    compute_outlet_entity_slug,
+    persist_article_entities_sync,
+)
+from services.narrative_synthesizer import synthesize_if_stale_sync
 from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
 from receipt_store import (
@@ -125,8 +150,12 @@ from receipt_store import (
     ensure_outlet_dossiers_table,
     ensure_reporter_dossiers_table,
     ensure_search_fts_indexes,
+    ensure_entity_profiles_tables,
     ensure_table,
     get_coalition_map,
+    get_entity_profile_row,
+    list_entity_evidence_rows,
+    list_entity_profile_rows,
     get_receipt as load_stored_receipt,
     insert_drift_snapshot,
     list_drift_schedule,
@@ -645,6 +674,7 @@ async def capture_schema_baselines() -> None:
         ("media_axis", ensure_media_axis_table),
         ("outlet_dossiers", ensure_outlet_dossiers_table),
         ("reporter_dossiers", ensure_reporter_dossiers_table),
+        ("entity_profiles", ensure_entity_profiles_tables),
     ):
         try:
             fn()
@@ -896,6 +926,13 @@ async def investigation_html_page(receipt_id: str) -> HTMLResponse:
     receipt = await asyncio.to_thread(load_stored_receipt, rid)
     if not receipt:
         raise HTTPException(status_code=404, detail="Investigation not found")
+    brief_check = receipt.get("contextual_brief")
+    if brief_check is None and isinstance(receipt.get("payload"), dict):
+        brief_check = receipt["payload"].get("contextual_brief")
+    _brief_ok = bool(
+        isinstance(brief_check, dict) and len(brief_check) > 0
+    )
+    logger.info("[RENDER] receipt_id=%s contextual_brief present: %s", rid, _brief_ok)
     coalition = await asyncio.to_thread(get_coalition_map, rid)
     return HTMLResponse(render_investigation_page(receipt, coalition))
 
@@ -957,7 +994,7 @@ def _dig_deeper_entity_is_person(name: str) -> bool:
     n = (name or "").strip()
     if not n:
         return False
-    return subject_looks_like_person({"subject": n, "claim": "", "claim_type": ""})
+    return is_person_name_for_courtlistener(n)
 
 
 def _justice_entity_signal(named_entities: list[Any]) -> bool:
@@ -1195,8 +1232,9 @@ async def dig_deeper_endpoint(receipt_id: str) -> dict[str, Any]:
         if len(persons) >= 4:
             break
 
+    # One person max: each runs 2 CL searches; keeps dig-deeper under API budget.
     if persons:
-        tasks = [_courtlistener_background_for_person(p) for p in persons]
+        tasks = [_courtlistener_background_for_person(p) for p in persons[:1]]
         court_parts = await asyncio.gather(*tasks, return_exceptions=True)
         for part in court_parts:
             if isinstance(part, Exception):
@@ -1907,6 +1945,19 @@ def _merge_cl_opinion_rows(
     return out
 
 
+async def _background_entity_pipeline(receipt: dict[str, Any], article_url: str) -> None:
+    """Persist entity evidence + stubs (contradiction / narrative) without blocking the client."""
+    try:
+        await asyncio.to_thread(persist_article_entities_sync, receipt, article_url)
+        for key in ("journalist_entity_slug", "outlet_entity_slug"):
+            slug = receipt.get(key)
+            if slug:
+                await asyncio.to_thread(run_if_sufficient_sync, str(slug))
+                await asyncio.to_thread(synthesize_if_stale_sync, str(slug))
+    except Exception:  # noqa: BLE001
+        logger.exception("[ENTITY] background pipeline failed")
+
+
 @app.post("/v1/analyze-article")
 async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     """
@@ -1938,6 +1989,8 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     claim_results: list[dict[str, Any]] = []
     revision_checks_run = 0
     MAX_REVISION_CHECKS = 4
+    courtlistener_calls_this_request = 0
+    MAX_COURTLISTENER_CALLS = 3
     claim_date = (
         str(article.get("published_date") or article.get("publication_date") or "")
         .strip()
@@ -1948,6 +2001,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         for claim in (extracted.get("claims") or [])[:15]:
             if not isinstance(claim, dict):
                 continue
+            claim_id = str(claim.get("claim_id") or uuid.uuid4())
             adapters = route_article_claim(claim)
             verifications: list[dict[str, Any]] = []
 
@@ -1991,76 +2045,106 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
 
                         ct = str(claim.get("claim_type") or "").lower()
                         subj = str(claim.get("subject") or "").strip()
-                        if ct == "rumored":
-                            q = build_query_for_adapter(claim, "courtlistener")
-                            cl_rows = await _cl_search.search_opinions(q, limit=5)
-                            if cl_rows:
-                                first_hit = cl_rows[0]
+                        if ct in ("rumored", "attribution"):
+                            if courtlistener_calls_this_request >= MAX_COURTLISTENER_CALLS:
+                                logger.debug(
+                                    "[COURTLISTENER] Per-request cap reached, skipping rumored search"
+                                )
                                 verifications.append(
                                     {
                                         "adapter": "courtlistener",
-                                        "status": "found",
-                                        "result": {
-                                            "case_name": first_hit.get("case_name", ""),
-                                            "court": first_hit.get("court", ""),
-                                            "date_filed": first_hit.get("date_filed", ""),
-                                            "url": first_hit.get("url", ""),
-                                            "snippet": str(
-                                                first_hit.get("summary")
-                                                or first_hit.get("snippet")
-                                                or ""
-                                            )[:300],
-                                            "source_url": first_hit.get("source_url")
-                                            or first_hit.get("url")
-                                            or "",
-                                            "matches_count": len(cl_rows),
-                                        },
+                                        "status": "skipped",
+                                        "detail": "Per-request CourtListener cap reached",
                                     }
                                 )
                             else:
-                                verifications.append(
-                                    {
-                                        "adapter": "courtlistener",
-                                        "status": "searched_none_found",
-                                        "result": {},
-                                    }
-                                )
+                                courtlistener_calls_this_request += 1
+                                q = build_query_for_adapter(claim, "courtlistener")
+                                cl_rows = await _cl_search.search_opinions(q, limit=5)
+                                if cl_rows:
+                                    first_hit = cl_rows[0]
+                                    verifications.append(
+                                        {
+                                            "adapter": "courtlistener",
+                                            "status": "found",
+                                            "result": {
+                                                "case_name": first_hit.get("case_name", ""),
+                                                "court": first_hit.get("court", ""),
+                                                "date_filed": first_hit.get("date_filed", ""),
+                                                "url": first_hit.get("url", ""),
+                                                "snippet": str(
+                                                    first_hit.get("summary")
+                                                    or first_hit.get("snippet")
+                                                    or ""
+                                                )[:300],
+                                                "source_url": first_hit.get("source_url")
+                                                or first_hit.get("url")
+                                                or "",
+                                                "matches_count": len(cl_rows),
+                                            },
+                                        }
+                                    )
+                                else:
+                                    verifications.append(
+                                        {
+                                            "adapter": "courtlistener",
+                                            "status": "searched_none_found",
+                                            "result": {},
+                                        }
+                                    )
                         elif subject_looks_like_person(claim) and subj:
-                            crim = await _cl_search.search_opinions(f"{subj} criminal", limit=3)
-                            civ = await _cl_search.search_opinions(subj, limit=3)
-                            merged = _merge_cl_opinion_rows(crim, civ)
-                            if merged:
-                                first_hit = merged[0]
+                            crim: list = []
+                            civ: list = []
+                            if courtlistener_calls_this_request < MAX_COURTLISTENER_CALLS:
+                                courtlistener_calls_this_request += 1
+                                crim = await _cl_search.search_opinions(
+                                    f"{subj} criminal", limit=3
+                                )
+                            if courtlistener_calls_this_request < MAX_COURTLISTENER_CALLS:
+                                courtlistener_calls_this_request += 1
+                                civ = await _cl_search.search_opinions(subj, limit=3)
+                            if not crim and not civ and courtlistener_calls_this_request >= MAX_COURTLISTENER_CALLS:
                                 verifications.append(
                                     {
                                         "adapter": "courtlistener",
-                                        "status": "found",
-                                        "result": {
-                                            "case_name": first_hit.get("case_name", ""),
-                                            "court": first_hit.get("court", ""),
-                                            "date_filed": first_hit.get("date_filed", ""),
-                                            "url": first_hit.get("url", ""),
-                                            "snippet": str(
-                                                first_hit.get("summary")
-                                                or first_hit.get("snippet")
-                                                or ""
-                                            )[:300],
-                                            "source_url": first_hit.get("source_url")
-                                            or first_hit.get("url")
-                                            or "",
-                                            "matches_count": len(merged),
-                                            "source": "background_check",
-                                        },
+                                        "status": "skipped",
+                                        "detail": "Per-request CourtListener cap reached",
                                     }
                                 )
                             else:
-                                verifications.append(
-                                    {
-                                        "adapter": "courtlistener",
-                                        "status": "searched_none_found",
-                                        "result": {},
-                                    }
-                                )
+                                merged = _merge_cl_opinion_rows(crim, civ)
+                                if merged:
+                                    first_hit = merged[0]
+                                    verifications.append(
+                                        {
+                                            "adapter": "courtlistener",
+                                            "status": "found",
+                                            "result": {
+                                                "case_name": first_hit.get("case_name", ""),
+                                                "court": first_hit.get("court", ""),
+                                                "date_filed": first_hit.get("date_filed", ""),
+                                                "url": first_hit.get("url", ""),
+                                                "snippet": str(
+                                                    first_hit.get("summary")
+                                                    or first_hit.get("snippet")
+                                                    or ""
+                                                )[:300],
+                                                "source_url": first_hit.get("source_url")
+                                                or first_hit.get("url")
+                                                or "",
+                                                "matches_count": len(merged),
+                                                "source": "background_check",
+                                            },
+                                        }
+                                    )
+                                else:
+                                    verifications.append(
+                                        {
+                                            "adapter": "courtlistener",
+                                            "status": "searched_none_found",
+                                            "result": {},
+                                        }
+                                    )
                         else:
                             verifications.append(
                                 {
@@ -2093,7 +2177,8 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
             claim_text = str(claim.get("claim") or "")
             claim_type = str(claim.get("claim_type") or "").lower()
             should_check_revisions = (
-                claim_type in ("institutional", "biographical")
+                claim_type
+                in ("institutional", "biographical", "factual_state", "identity_affiliation")
                 and bool(subject.strip())
                 and len(subject.split()) <= 3
                 and not any(
@@ -2138,9 +2223,16 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
                     )
 
             claim_row: dict[str, Any] = {
+                "claim_id": claim_id,
                 "claim": claim.get("claim"),
                 "subject": claim.get("subject"),
                 "claim_type": claim.get("claim_type"),
+                "normalized_claim_text": claim.get("normalized_claim_text"),
+                "importance_weight": claim.get("importance_weight"),
+                "explicitness": claim.get("explicitness"),
+                "centrality": claim.get("centrality"),
+                "implication_risk": claim.get("implication_risk"),
+                "what_is_not_established": claim.get("what_is_not_established"),
                 "cited_source": claim.get("cited_source"),
                 "rumor_source": claim.get("rumor_source"),
                 "rumor_language": claim.get("rumor_language"),
@@ -2162,15 +2254,24 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
 
     rid = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
+    body_text = str(article.get("text") or "")
+    content_sha256 = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+    canonical_u = str(article.get("canonical_url") or article.get("url") or url).strip()
+    retrieval_ts = str(article.get("retrieved_at") or now)
     receipt_payload: dict[str, Any] = {
         "report_id": rid,
         "receipt_type": "article_analysis",
         "article": {
             "url": article["url"],
+            "canonical_url": canonical_u,
+            "requested_url": article.get("requested_url") or url,
             "title": article.get("title"),
             "publication": article.get("publication"),
+            "author": article.get("author"),
             "word_count": article.get("word_count"),
             "truncated": article.get("truncated", False),
+            "retrieved_at": retrieval_ts,
+            "content_sha256": content_sha256,
         },
         "article_topic": extracted.get("article_topic"),
         "named_entities": extracted.get("named_entities") or [],
@@ -2181,6 +2282,10 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         "generated_at": now,
     }
     coverage_context = ""
+    coverage_full: dict[str, Any] | None = None
+    receipt_payload["journalist_dossier"] = None
+    receipt_payload["outlet_dossier"] = None
+    receipt_payload["absence_signal"] = None
     try:
         from comparative_coverage import coverage_result_for_receipt, format_coverage_for_prompt
         from source_expansion import expand_sources
@@ -2231,6 +2336,100 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     except Exception as _se_err:  # noqa: BLE001
         logger.warning("source_expansion failed: %s", _se_err)
 
+    _qt = (coverage_full or {}).get("query_terms") if isinstance(coverage_full, dict) else None
+    _ce = _qt.get("core_entities") if isinstance(_qt, dict) else None
+    receipt_payload["coverage_core_entities"] = [
+        str(x).strip() for x in (_ce or []) if isinstance(x, str) and str(x).strip()
+    ]
+
+    outlet_domain = ""
+    try:
+        outlet_domain = (urllib.parse.urlparse(canonical_u).netloc or "").lower()
+        if outlet_domain.startswith("www."):
+            outlet_domain = outlet_domain[4:]
+    except Exception:  # noqa: BLE001
+        outlet_domain = ""
+
+    author_raw = article.get("author")
+    try:
+        jd = await asyncio.to_thread(
+            build_journalist_dossier_for_article,
+            str(author_raw).strip() if author_raw else "",
+            str(article.get("publication") or "").strip(),
+            receipt_payload.get("article_topic"),
+            canonical_u,
+            body_text,
+            list(receipt_payload.get("named_entities") or []),
+        )
+        if isinstance(jd, dict) and jd:
+            receipt_payload["journalist_dossier"] = jd
+            try:
+                await attach_proportionality_packets_to_fec_donations(jd.get("fec_donations"))
+            except Exception as _fec_pp_err:  # noqa: BLE001
+                logger.warning("proportionality FEC attach failed: %s", _fec_pp_err)
+    except Exception as _jd_err:  # noqa: BLE001
+        logger.warning("journalist_dossier failed: %s", _jd_err)
+
+    try:
+        od = await enrich_outlet_dossier_for_article(
+            str(article.get("publication") or outlet_domain or "").strip(),
+            outlet_domain,
+            str(receipt_payload.get("article_topic") or "").strip() or None,
+        )
+        if isinstance(od, dict) and od:
+            receipt_payload["outlet_dossier"] = od
+    except Exception as _od_err:  # noqa: BLE001
+        logger.warning("outlet_dossier failed: %s", _od_err)
+
+    if coverage_full is not None:
+        try:
+            absence = compute_absence_signal(
+                article,
+                coverage_full,
+                receipt_payload["outlet_dossier"]
+                if isinstance(receipt_payload.get("outlet_dossier"), dict)
+                else None,
+            )
+            if isinstance(absence, dict):
+                receipt_payload["absence_signal"] = absence
+        except Exception as _abs_err:  # noqa: BLE001
+            logger.warning("absence_signal failed: %s", _abs_err)
+
+    _out_pr: list[Any] = []
+    if isinstance(receipt_payload.get("outlet_dossier"), dict):
+        _out_pr = list(receipt_payload["outlet_dossier"].get("proportionality_records") or [])
+    _rep_pr: list[dict[str, Any]] = []
+    _jd_fin = receipt_payload.get("journalist_dossier")
+    _od_fin = receipt_payload.get("outlet_dossier") if isinstance(receipt_payload.get("outlet_dossier"), dict) else {}
+    if isinstance(_jd_fin, dict):
+        _subj = str(_jd_fin.get("display_name") or "Named byline").strip()
+        for _d in _jd_fin.get("fec_donations") or []:
+            if not isinstance(_d, dict):
+                continue
+            if not _d.get("proportionality_fetch_params"):
+                continue
+            _rep_pr.append(
+                {
+                    "trigger": "journalist_fec",
+                    "subject": _subj,
+                    "outlet_name": _od_fin.get("outlet"),
+                    "parent_company": _od_fin.get("parent_company"),
+                    "packet": _d.get("proportionality_packet"),
+                    "fetch_params": _d.get("proportionality_fetch_params"),
+                    "fec_match_confidence": _d.get("match_confidence"),
+                },
+            )
+    receipt_payload["proportionality_records"] = _out_pr + _rep_pr
+
+    _jsp = receipt_payload.get("journalist_dossier")
+    _osp = receipt_payload.get("outlet_dossier")
+    receipt_payload["journalist_entity_slug"] = (
+        compute_journalist_entity_slug(_jsp) if isinstance(_jsp, dict) else None
+    )
+    receipt_payload["outlet_entity_slug"] = (
+        compute_outlet_entity_slug(_osp, article) if isinstance(_osp, dict) else None
+    )
+
     _src_echo = list(receipt_payload.get("sources") or [])
     receipt_payload["echo_chamber"] = compute_echo_chamber_score(
         merge_sources_for_echo(_src_echo, None),
@@ -2258,6 +2457,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         (receipt_payload.get("article") or {}).get("title") or ""
     ).strip()
     if topic_for_brief:
+        logger.info("[CONTEXT_BRIEF] Starting generation…")
         try:
             cb_result = await asyncio.to_thread(
                 generate_contextual_brief,
@@ -2268,15 +2468,84 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
             )
             if isinstance(cb_result, dict) and cb_result:
                 receipt_payload["contextual_brief"] = cb_result
-                logger.info("[CONTEXT_BRIEF] Generated successfully")
+                logger.info(
+                    "[CONTEXT_BRIEF] Generated — keys: %s",
+                    list(cb_result.keys()),
+                )
+            else:
+                logger.warning(
+                    "[CONTEXT_BRIEF] Empty result — brief will not render"
+                )
         except Exception as _cb_err:  # noqa: BLE001
             logger.warning("[CONTEXT_BRIEF] Failed: %s", _cb_err)
+
+    claim_audits = build_claim_audits_for_results(claim_results)
+    by_audit_id = {str(a.get("claim_id") or ""): a for a in claim_audits}
+    for row in claim_results:
+        cid = str(row.get("claim_id") or "")
+        if cid and cid in by_audit_id:
+            row["claim_audit"] = by_audit_id[cid]
+
+    cov_found = False
+    sp_fin = receipt_payload.get("source_provenance")
+    if isinstance(sp_fin, dict):
+        cov_found = bool(sp_fin.get("coverage_found"))
+    om_cov = receipt_payload.get("coverage_result")
+    om_gp = receipt_payload.get("global_perspectives")
+    om_wnoc = receipt_payload.get("what_nobody_is_covering")
+    omission_analysis = build_article_omission_analysis(
+        coverage_result=om_cov if isinstance(om_cov, dict) else {},
+        global_perspectives=om_gp if isinstance(om_gp, dict) else {},
+        what_nobody_is_covering=om_wnoc if isinstance(om_wnoc, list) else [],
+        claim_audits=claim_audits,
+    )
+    ext_err_raw = extracted.get("extraction_error")
+    ext_err_s = str(ext_err_raw).strip() if ext_err_raw else ""
+    audit_unknowns = build_audit_unknowns(
+        extraction_error=ext_err_s or None,
+        claim_results=claim_results,
+        coverage_found=cov_found,
+    )
+    article_disposition = compute_article_disposition(
+        claim_audits=claim_audits,
+        omission_article=omission_analysis.get("article", {})
+        if isinstance(omission_analysis, dict)
+        else {},
+        coverage_insufficient=not cov_found,
+        claims_extracted=int(receipt_payload.get("claims_extracted") or 0),
+        extraction_error=ext_err_s or None,
+    )
+    source_ledger = build_source_ledger(
+        receipt_payload.get("sources") if isinstance(receipt_payload.get("sources"), list) else [],
+        canonical_u,
+    )
+    receipt_payload["url_analyzed"] = url
+    receipt_payload["canonical_url"] = canonical_u
+    receipt_payload["retrieval_timestamp"] = retrieval_ts
+    receipt_payload["content_sha256"] = content_sha256
+    receipt_payload["parser_extraction_version"] = PARSER_EXTRACTION_VERSION
+    receipt_payload["claim_extraction_version"] = CLAIM_EXTRACTION_VERSION
+    receipt_payload["audit_rubric_version"] = AUDIT_RUBRIC_VERSION
+    receipt_payload["claim_audits"] = claim_audits
+    receipt_payload["omission_analysis"] = omission_analysis
+    receipt_payload["audit_unknowns"] = audit_unknowns
+    receipt_payload["article_disposition"] = article_disposition
+    receipt_payload["source_ledger"] = source_ledger
+    receipt_payload["audit_summary_one_liner"] = build_audit_summary_one_liner(
+        claims_extracted=int(receipt_payload.get("claims_extracted") or 0),
+        claim_audits=claim_audits,
+        omission_analysis=omission_analysis,
+        audit_unknowns=audit_unknowns,
+    )
 
     signed_payload = attach_article_analysis_signing(receipt_payload)
     try:
         store_receipt(signed_payload)
     except Exception:  # noqa: BLE001
         pass
+
+    asyncio.create_task(_background_entity_pipeline(signed_payload, url))
+
     cov_summary = signed_payload.get("coverage_result") or {}
     sp_fin = signed_payload.get("source_provenance")
     grounded_fin = bool(
@@ -2523,6 +2792,112 @@ async def fec_search(name: str) -> dict[str, Any]:
         }
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/v1/proportionality")
+async def proportionality_proxy(
+    category: str = Query(..., description="EthicalAlt proportionality category, e.g. legal or political"),
+    violation_type: str | None = Query(None),
+    charge_status: str | None = Query(None),
+    amount_involved: float | None = Query(None),
+    lat: float | None = Query(None),
+    lng: float | None = Query(None),
+) -> dict[str, Any]:
+    """Proxy to EthicalAlt `/proportionality` so the web app can re-fetch with geo without CORS issues."""
+    from services.proportionality_client import fetch_proportionality_packet
+
+    packet = await fetch_proportionality_packet(
+        category=category,
+        violation_type=violation_type,
+        charge_status=charge_status,
+        amount_involved=amount_involved,
+        lat=lat,
+        lng=lng,
+    )
+    return {"proportionality": packet}
+
+
+def _jsonable_entity_row(row: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for k, v in row.items():
+        if hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+async def _get_entity_profile_payload(slug: str) -> dict[str, Any]:
+    """Postgres-backed investigation profile; missing row => pending (profile may still be writing)."""
+    try:
+        row = await asyncio.to_thread(get_entity_profile_row, slug)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        return {"status": "pending", "entity_slug": slug}
+    out = _jsonable_entity_row(row)
+    out["status"] = "ready"
+    return out
+
+
+@app.get("/v1/entity/{slug}")
+async def get_entity_profile_endpoint(slug: str) -> dict[str, Any]:
+    return await _get_entity_profile_payload(slug)
+
+
+@app.get("/api/entity/{slug}")
+async def get_entity_profile_api_path(slug: str) -> dict[str, Any]:
+    """Alias for frontends that proxy `/api/*` to the API service."""
+    return await _get_entity_profile_payload(slug)
+
+
+@app.get("/v1/entities")
+async def list_entity_profiles_endpoint(
+    entity_type: str | None = Query(None, alias="type"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> dict[str, Any]:
+    try:
+        rows = await asyncio.to_thread(
+            list_entity_profile_rows,
+            entity_type=entity_type,
+            limit=limit,
+            offset=offset,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    serialized = [_jsonable_entity_row(r) for r in rows]
+    return {"entities": serialized, "limit": limit, "offset": offset}
+
+
+@app.get("/v1/entity/{slug}/evidence")
+async def list_entity_evidence_endpoint(
+    slug: str,
+    evidence_type: str | None = Query(None, alias="type"),
+    limit: int = Query(20, ge=1, le=100),
+) -> dict[str, Any]:
+    try:
+        rows = await asyncio.to_thread(
+            list_entity_evidence_rows,
+            slug,
+            evidence_type=evidence_type,
+            limit=limit,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"evidence": rows, "slug": slug}
+
+
+@app.get("/v1/entity/{slug}/contradictions")
+async def get_entity_contradictions_endpoint(slug: str) -> dict[str, Any]:
+    try:
+        row = await asyncio.to_thread(get_entity_profile_row, slug)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    cj = row.get("contradiction_json")
+    return {"slug": slug, "contradictions": cj if cj is not None else []}
 
 
 def _resolve_fec_candidate_id(name: str) -> str:
@@ -4446,7 +4821,7 @@ def receipt_share_page(receipt_id: str) -> HTMLResponse:
 
 
 def _entity_ledger_payload(normalized: str, *, limit: int | None = None) -> dict[str, Any]:
-    """Build JSON for GET /v1/entity/{name} and summary (optional row limit for receipts)."""
+    """Build JSON for GET /v1/entity-ledger/{name} and summary (optional row limit for receipts)."""
     with _db_lock:
         conn = sqlite3.connect(str(_DB_PATH))
         conn.row_factory = sqlite3.Row
@@ -4507,23 +4882,23 @@ def _entity_ledger_payload(normalized: str, *, limit: int | None = None) -> dict
     }
 
 
-@app.get("/v1/entity/{name}/summary")
+@app.get("/v1/entity-ledger/{name}/summary")
 def get_entity_summary(name: str) -> dict[str, Any]:
     """Behavioral ledger for an entity — counts + most recent 3 receipts only."""
     normalized = _path_param_to_normalized(name)
     return _entity_ledger_payload(normalized, limit=3)
 
 
-@app.get("/v1/entity/{name}")
+@app.get("/v1/entity-ledger/{name}")
 def get_entity_ledger(name: str) -> dict[str, Any]:
-    """Full behavioral ledger for a normalized entity name."""
+    """Full behavioral ledger for a normalized entity name (SQLite entity_receipts index)."""
     normalized = _path_param_to_normalized(name)
     return _entity_ledger_payload(normalized, limit=None)
 
 
-@app.get("/v1/entities")
+@app.get("/v1/entity-ledgers")
 def list_entities() -> dict[str, Any]:
-    """All entities Frame has indexed, by receipt count descending."""
+    """All entities Frame has indexed in entity_receipts, by receipt count descending."""
     with _db_lock:
         conn = sqlite3.connect(str(_DB_PATH))
         conn.row_factory = sqlite3.Row
@@ -4562,7 +4937,7 @@ def list_entities() -> dict[str, Any]:
 
 @app.get("/entity/{name}", response_class=HTMLResponse)
 def entity_share_page(name: str) -> HTMLResponse:
-    """Standalone entity ledger page (baroque frame; loads JSON from GET /v1/entity/{name})."""
+    """Standalone entity ledger page (baroque frame; loads JSON from GET /v1/entity-ledger/{name})."""
     path = _repo_root() / "apps" / "web" / "entity.html"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="entity page template missing")

@@ -83,6 +83,9 @@ def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
     src = body.get("sources")
     if isinstance(src, list) and len(src) > 0:
         signing_body["sources"] = src
+    for k in ("journalist_dossier", "outlet_dossier", "absence_signal", "proportionality_records"):
+        if k in body:
+            signing_body[k] = body[k]
     sv = body.get("schema_version")
     if sv is not None:
         signing_body["schema_version"] = sv

@@ -400,6 +400,250 @@ a {
   margin: 28px 0 12px;
 }
 
+.pe-record-section {
+  margin-top: 8px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+
+.pe-record-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 16px;
+}
+
+.pe-record-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  margin: 20px 0 10px;
+}
+
+.pe-record-sub:first-of-type {
+  margin-top: 0;
+}
+
+.pe-record-row {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+
+.pe-record-receipt-row {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--bg-card);
+  border-radius: 6px;
+  border-left: 3px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.pe-prop-qualifier {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+}
+
+.pe-prop-record {
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pe-prop-record:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.pe-prop-packet {
+  margin-top: 10px;
+}
+
+.pe-prop-block {
+  margin-top: 14px;
+}
+
+.pe-prop-block-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-cyan);
+  margin-bottom: 6px;
+}
+
+.pe-prop-line {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0 0 4px;
+}
+
+.pe-prop-line.muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pe-prop-link {
+  font-size: 12px;
+  display: inline-block;
+  margin-top: 6px;
+}
+
+.pe-prop-geo-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-cyan);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.pe-prop-geo-btn:hover {
+  filter: brightness(1.08);
+}
+
+.pe-sa-section {
+  margin-top: 24px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-surface);
+}
+
+.pe-sa-block {
+  margin-top: 16px;
+}
+
+.pe-sa-block:first-of-type {
+  margin-top: 8px;
+}
+
+.pe-sa-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.pe-sa-role {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--accent-cyan);
+}
+
+.pe-sa-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pe-sa-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.pe-sa-headline {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--text-primary);
+  margin: 8px 0 4px;
+}
+
+.pe-sa-gap {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin: 0 0 8px;
+}
+
+.pe-sa-line {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 6px 0 0;
+}
+
+.pe-sa-line.muted {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pe-sa-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.pe-sa-code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.pe-sa-skeleton {
+  margin: 10px 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pe-sa-skel-line {
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--border) 0%,
+    color-mix(in oklab, var(--text-muted) 35%, var(--border)) 50%,
+    var(--border) 100%
+  );
+  background-size: 200% 100%;
+  animation: pe-sa-shimmer 1.2s ease-in-out infinite;
+}
+
+.pe-sa-skel-w90 {
+  width: 90%;
+}
+
+.pe-sa-skel-w70 {
+  width: 70%;
+}
+
+.pe-sa-skel-w50 {
+  width: 50%;
+}
+
+@keyframes pe-sa-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .pe-hook {
   font-size: clamp(1.15rem, 2.2vw, 1.45rem);
   font-weight: 500;

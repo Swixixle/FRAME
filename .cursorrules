@@ -45,3 +45,7 @@ Nested models must match `models/dossier.py` exactly.
 ## Deploy (Render)
 
 Use `render.yaml` at repo root. Web service: `frame-api`, Python, `rootDir: .`, build installs `apps/api/requirements.txt`, start `cd apps/api && uvicorn main:app --host 0.0.0.0 --port $PORT`. Optional worker service: `frame-worker`, start `cd apps/api && python worker.py`.
+
+## PUBLIC EYE handoff (investigation receipt / entity layer)
+
+Before changing entity routes, receipts, or SOURCES & ACTORS, read **`docs/HANDOFF_PUBLIC_EYE.md`** and keep it updated when contracts shift.
