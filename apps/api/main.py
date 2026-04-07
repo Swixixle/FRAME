@@ -95,7 +95,7 @@ from actor_ledger_api import (
     validate_actor_slug,
 )
 from pattern_api import get_pattern_lib_payload, run_pattern_match
-from public_narrative_api import generate_contextual_brief, run_global_perspectives
+from public_narrative_api import run_global_perspectives
 from query_engine import run_query
 from query_synthesizer import synthesize_articles, synthesize_timeline
 from spread_api import run_spread
@@ -105,18 +105,6 @@ from actor_layer_fast import run_actor_layer_fast
 from article_ingest import fetch_article
 from claim_extractor import extract_claims
 
-# Audit spine (full rubric pending — see claim_audit_engine module docstring).
-from claim_audit_engine import (
-    AUDIT_RUBRIC_VERSION,
-    CLAIM_EXTRACTION_VERSION,
-    PARSER_EXTRACTION_VERSION,
-    build_article_omission_analysis,
-    build_audit_summary_one_liner,
-    build_audit_unknowns,
-    build_claim_audits_for_results,
-    build_source_ledger,
-    compute_article_disposition,
-)
 from claim_router import (
     build_query_for_adapter,
     is_person_name_for_courtlistener,
@@ -124,22 +112,12 @@ from claim_router import (
     subject_looks_like_person,
 )
 from revision_tracker import find_claim_revisions
-from absence_signal import compute_absence_signal
-from comparative_coverage import (
-    extract_query_terms,
-    fetch_newsapi_coverage,
-    get_comparative_coverage,
+from first_class_investigation import (
+    ANALYZE_ADAPTER_TIMEOUT,
+    build_journalist_investigation_record,
+    build_outlet_investigation_record,
 )
-from journalist_dossier_article import build_journalist_dossier_for_article
-from outlet_dossier_article import enrich_outlet_dossier_for_article
-from reporter_dossier_service import attach_proportionality_packets_to_fec_donations
-from services.contradiction_engine import run_if_sufficient_sync
-from services.entity_persistence import (
-    compute_journalist_entity_slug,
-    compute_outlet_entity_slug,
-    persist_article_entities_sync,
-)
-from services.narrative_synthesizer import synthesize_if_stale_sync
+from services.entity_persistence import compute_journalist_entity_slug, compute_outlet_entity_slug
 from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
 from receipt_store import (
@@ -150,8 +128,8 @@ from receipt_store import (
     ensure_outlet_dossiers_table,
     ensure_reporter_dossiers_table,
     ensure_search_fts_indexes,
-    ensure_entity_profiles_tables,
     ensure_table,
+    ensure_entity_profiles_tables,
     get_coalition_map,
     get_entity_profile_row,
     list_entity_evidence_rows,
@@ -164,7 +142,6 @@ from receipt_store import (
     schedule_drift_analysis,
     store_receipt,
 )
-from echo_chamber import compute_echo_chamber_score, merge_sources_for_echo
 from drift_engine import compute_drift
 from investigation_page import render_investigation_page
 from methodology_page import render_methodology_page
@@ -173,8 +150,13 @@ from services.scrutiny_analyzer import analyze_asymmetric_scrutiny
 from url_resolver import format_content_provenance, provenance_user_upload, resolve_url
 from report_api import (
     attach_article_analysis_signing,
+    attach_journalist_investigation_signing,
+    attach_outlet_investigation_signing,
     build_article_analysis_signing_body,
+    build_article_analysis_signing_body_legacy_v1,
     build_extended_report_async,
+    build_journalist_signing_body,
+    build_outlet_signing_body,
 )
 from surface_adapter import SLENDERMAN_SURFACE_BASELINE, run_surface_layer
 from dispute_api import pattern_ids_in_library, run_dispute_append, run_dispute_get
@@ -216,6 +198,15 @@ def receipt_body_for_content_hash(receipt: dict[str, Any]) -> dict[str, Any]:
 
 def receipt_body_for_signing(receipt: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in receipt.items() if k != "signature"}
+
+
+def _public_eye_podcast_enabled() -> bool:
+    return os.environ.get("PUBLIC_EYE_PODCAST_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
 
 
 class NarrativeSentence(BaseModel):
@@ -933,8 +924,7 @@ async def investigation_html_page(receipt_id: str) -> HTMLResponse:
         isinstance(brief_check, dict) and len(brief_check) > 0
     )
     logger.info("[RENDER] receipt_id=%s contextual_brief present: %s", rid, _brief_ok)
-    coalition = await asyncio.to_thread(get_coalition_map, rid)
-    return HTMLResponse(render_investigation_page(receipt, coalition))
+    return HTMLResponse(render_investigation_page(receipt, None))
 
 
 # --- Dig deeper (on-demand: counter-claims, unsourced patterns, crime taxonomy, CourtListener) ---
@@ -1027,13 +1017,8 @@ def _justice_entity_signal(named_entities: list[Any]) -> bool:
 
 
 def _gather_coverage_articles_sync(receipt: dict[str, Any]) -> list[dict[str, Any]]:
-    article = _receipt_to_article_dict(receipt)
-    cov = get_comparative_coverage(article)
-    articles: list[dict[str, Any]] = list(cov.get("articles") or [])
-    if not articles:
-        terms = extract_query_terms(article)
-        articles = list(fetch_newsapi_coverage(terms) or [])
-    return articles
+    """GDELT/NewsAPI comparative coverage removed from the live stack; dig-deeper gets no extra articles."""
+    return []
 
 
 def _count_outlets_for_claim(
@@ -1945,19 +1930,6 @@ def _merge_cl_opinion_rows(
     return out
 
 
-async def _background_entity_pipeline(receipt: dict[str, Any], article_url: str) -> None:
-    """Persist entity evidence + stubs (contradiction / narrative) without blocking the client."""
-    try:
-        await asyncio.to_thread(persist_article_entities_sync, receipt, article_url)
-        for key in ("journalist_entity_slug", "outlet_entity_slug"):
-            slug = receipt.get(key)
-            if slug:
-                await asyncio.to_thread(run_if_sufficient_sync, str(slug))
-                await asyncio.to_thread(synthesize_if_stale_sync, str(slug))
-    except Exception:  # noqa: BLE001
-        logger.exception("[ENTITY] background pipeline failed")
-
-
 @app.post("/v1/analyze-article")
 async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     """
@@ -1997,7 +1969,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         or "unknown"
     )
 
-    async with httpx.AsyncClient(timeout=25) as rev_session:
+    async with httpx.AsyncClient(timeout=ANALYZE_ADAPTER_TIMEOUT) as rev_session:
         for claim in (extracted.get("claims") or [])[:15]:
             if not isinstance(claim, dict):
                 continue
@@ -2165,10 +2137,16 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
                             }
                         )
                 except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[ANALYZE] adapter=%s status=error detail=%s",
+                        adapter_name,
+                        str(exc)[:300],
+                    )
                     verifications.append(
                         {
                             "adapter": adapter_name,
                             "status": "error",
+                            "source_error": True,
                             "detail": str(exc),
                         }
                     )
@@ -2207,7 +2185,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
                             claim_date=claim_date,
                             session=rev_session,
                         ),
-                        timeout=20.0,
+                        timeout=ANALYZE_ADAPTER_TIMEOUT,
                     )
                 except asyncio.TimeoutError:
                     logger.warning("[REVISION] Timeout for subject %r — skipping", subject)
@@ -2281,67 +2259,6 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         "sources_checked": adapter_names,
         "generated_at": now,
     }
-    coverage_context = ""
-    coverage_full: dict[str, Any] | None = None
-    receipt_payload["journalist_dossier"] = None
-    receipt_payload["outlet_dossier"] = None
-    receipt_payload["absence_signal"] = None
-    try:
-        from comparative_coverage import coverage_result_for_receipt, format_coverage_for_prompt
-        from source_expansion import expand_sources
-
-        def _run_expand() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-            return expand_sources(
-                article,
-                url,
-                named_entities=list(receipt_payload.get("named_entities") or []),
-                article_topic=receipt_payload.get("article_topic"),
-                max_sources=12,
-            )
-
-        extra_sources, coverage_full = await asyncio.to_thread(_run_expand)
-        coverage_context = format_coverage_for_prompt(coverage_full)
-        receipt_payload["coverage_result"] = coverage_result_for_receipt(coverage_full)
-        receipt_payload["source_provenance"] = {
-            "coverage_adapter": coverage_full["source_adapter"],
-            "gdelt_stage": coverage_full["gdelt_stage"],
-            "query_terms_used": coverage_full["query_terms"],
-            "coverage_found": coverage_full["coverage_found"],
-            "failure_reason": coverage_full["failure_reason"],
-        }
-        if not coverage_full.get("coverage_found"):
-            receipt_payload["volatility_score"] = None
-            receipt_payload["volatility_score_note"] = (
-                "Insufficient comparative coverage to score divergence"
-            )
-            receipt_payload["irreconcilable_gap"] = None
-            receipt_payload["anchor_positions"] = [
-                {
-                    "label": (article.get("publication") or "").strip() or "Original source",
-                    "url": article.get("url"),
-                    "title": article.get("title"),
-                    "framing": (
-                        "Single-source analysis — only the originating article was available "
-                        "for comparative framing."
-                    ),
-                }
-            ]
-            receipt_payload["what_nobody_is_covering"] = [
-                "Coverage search returned no comparable sources. This may indicate the story is "
-                "very new, very niche, or indexed under different terminology."
-            ]
-        if extra_sources:
-            existing = list(receipt_payload.get("sources") or [])
-            receipt_payload["sources"] = existing + extra_sources
-    except Exception as _se_err:  # noqa: BLE001
-        logger.warning("source_expansion failed: %s", _se_err)
-
-    _qt = (coverage_full or {}).get("query_terms") if isinstance(coverage_full, dict) else None
-    _ce = _qt.get("core_entities") if isinstance(_qt, dict) else None
-    receipt_payload["coverage_core_entities"] = [
-        str(x).strip() for x in (_ce or []) if isinstance(x, str) and str(x).strip()
-    ]
-
     outlet_domain = ""
     try:
         outlet_domain = (urllib.parse.urlparse(canonical_u).netloc or "").lower()
@@ -2350,216 +2267,67 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         outlet_domain = ""
 
-    author_raw = article.get("author")
-    try:
-        jd = await asyncio.to_thread(
-            build_journalist_dossier_for_article,
-            str(author_raw).strip() if author_raw else "",
-            str(article.get("publication") or "").strip(),
-            receipt_payload.get("article_topic"),
-            canonical_u,
-            body_text,
-            list(receipt_payload.get("named_entities") or []),
-        )
-        if isinstance(jd, dict) and jd:
-            receipt_payload["journalist_dossier"] = jd
-            try:
-                await attach_proportionality_packets_to_fec_donations(jd.get("fec_donations"))
-            except Exception as _fec_pp_err:  # noqa: BLE001
-                logger.warning("proportionality FEC attach failed: %s", _fec_pp_err)
-    except Exception as _jd_err:  # noqa: BLE001
-        logger.warning("journalist_dossier failed: %s", _jd_err)
-
-    try:
-        od = await enrich_outlet_dossier_for_article(
-            str(article.get("publication") or outlet_domain or "").strip(),
-            outlet_domain,
-            str(receipt_payload.get("article_topic") or "").strip() or None,
-        )
-        if isinstance(od, dict) and od:
-            receipt_payload["outlet_dossier"] = od
-    except Exception as _od_err:  # noqa: BLE001
-        logger.warning("outlet_dossier failed: %s", _od_err)
-
-    if coverage_full is not None:
-        try:
-            absence = compute_absence_signal(
-                article,
-                coverage_full,
-                receipt_payload["outlet_dossier"]
-                if isinstance(receipt_payload.get("outlet_dossier"), dict)
-                else None,
-            )
-            if isinstance(absence, dict):
-                receipt_payload["absence_signal"] = absence
-        except Exception as _abs_err:  # noqa: BLE001
-            logger.warning("absence_signal failed: %s", _abs_err)
-
-    _out_pr: list[Any] = []
-    if isinstance(receipt_payload.get("outlet_dossier"), dict):
-        _out_pr = list(receipt_payload["outlet_dossier"].get("proportionality_records") or [])
-    _rep_pr: list[dict[str, Any]] = []
-    _jd_fin = receipt_payload.get("journalist_dossier")
-    _od_fin = receipt_payload.get("outlet_dossier") if isinstance(receipt_payload.get("outlet_dossier"), dict) else {}
-    if isinstance(_jd_fin, dict):
-        _subj = str(_jd_fin.get("display_name") or "Named byline").strip()
-        for _d in _jd_fin.get("fec_donations") or []:
-            if not isinstance(_d, dict):
-                continue
-            if not _d.get("proportionality_fetch_params"):
-                continue
-            _rep_pr.append(
-                {
-                    "trigger": "journalist_fec",
-                    "subject": _subj,
-                    "outlet_name": _od_fin.get("outlet"),
-                    "parent_company": _od_fin.get("parent_company"),
-                    "packet": _d.get("proportionality_packet"),
-                    "fetch_params": _d.get("proportionality_fetch_params"),
-                    "fec_match_confidence": _d.get("match_confidence"),
-                },
-            )
-    receipt_payload["proportionality_records"] = _out_pr + _rep_pr
-
-    _jsp = receipt_payload.get("journalist_dossier")
-    _osp = receipt_payload.get("outlet_dossier")
-    receipt_payload["journalist_entity_slug"] = (
-        compute_journalist_entity_slug(_jsp) if isinstance(_jsp, dict) else None
-    )
-    receipt_payload["outlet_entity_slug"] = (
-        compute_outlet_entity_slug(_osp, article) if isinstance(_osp, dict) else None
-    )
-
-    _src_echo = list(receipt_payload.get("sources") or [])
-    receipt_payload["echo_chamber"] = compute_echo_chamber_score(
-        merge_sources_for_echo(_src_echo, None),
-        None,
-    )
-    narrative_for_gp = (
-        str(receipt_payload.get("article_topic") or "").strip()
-        or str((receipt_payload.get("article") or {}).get("title") or "").strip()
-    )
-    if narrative_for_gp:
-        try:
-            gp_result = await asyncio.to_thread(
-                run_global_perspectives,
-                narrative_for_gp,
-                coverage_context,
-            )
-            if gp_result and isinstance(gp_result, dict):
-                receipt_payload["global_perspectives"] = gp_result
-        except Exception as _gp_err:  # noqa: BLE001
-            logger.warning(
-                "global_perspectives failed in analyze_article: %s",
-                _gp_err,
-            )
-    topic_for_brief = narrative_for_gp or str(
-        (receipt_payload.get("article") or {}).get("title") or ""
-    ).strip()
-    if topic_for_brief:
-        logger.info("[CONTEXT_BRIEF] Starting generation…")
-        try:
-            cb_result = await asyncio.to_thread(
-                generate_contextual_brief,
-                topic_for_brief,
-                str((receipt_payload.get("article") or {}).get("title") or ""),
-                list(receipt_payload.get("named_entities") or []),
-                coverage_context,
-            )
-            if isinstance(cb_result, dict) and cb_result:
-                receipt_payload["contextual_brief"] = cb_result
-                logger.info(
-                    "[CONTEXT_BRIEF] Generated — keys: %s",
-                    list(cb_result.keys()),
-                )
-            else:
-                logger.warning(
-                    "[CONTEXT_BRIEF] Empty result — brief will not render"
-                )
-        except Exception as _cb_err:  # noqa: BLE001
-            logger.warning("[CONTEXT_BRIEF] Failed: %s", _cb_err)
-
-    claim_audits = build_claim_audits_for_results(claim_results)
-    by_audit_id = {str(a.get("claim_id") or ""): a for a in claim_audits}
-    for row in claim_results:
-        cid = str(row.get("claim_id") or "")
-        if cid and cid in by_audit_id:
-            row["claim_audit"] = by_audit_id[cid]
-
-    cov_found = False
-    sp_fin = receipt_payload.get("source_provenance")
-    if isinstance(sp_fin, dict):
-        cov_found = bool(sp_fin.get("coverage_found"))
-    om_cov = receipt_payload.get("coverage_result")
-    om_gp = receipt_payload.get("global_perspectives")
-    om_wnoc = receipt_payload.get("what_nobody_is_covering")
-    omission_analysis = build_article_omission_analysis(
-        coverage_result=om_cov if isinstance(om_cov, dict) else {},
-        global_perspectives=om_gp if isinstance(om_gp, dict) else {},
-        what_nobody_is_covering=om_wnoc if isinstance(om_wnoc, list) else [],
-        claim_audits=claim_audits,
-    )
-    ext_err_raw = extracted.get("extraction_error")
-    ext_err_s = str(ext_err_raw).strip() if ext_err_raw else ""
-    audit_unknowns = build_audit_unknowns(
-        extraction_error=ext_err_s or None,
-        claim_results=claim_results,
-        coverage_found=cov_found,
-    )
-    article_disposition = compute_article_disposition(
-        claim_audits=claim_audits,
-        omission_article=omission_analysis.get("article", {})
-        if isinstance(omission_analysis, dict)
-        else {},
-        coverage_insufficient=not cov_found,
-        claims_extracted=int(receipt_payload.get("claims_extracted") or 0),
-        extraction_error=ext_err_s or None,
-    )
-    source_ledger = build_source_ledger(
-        receipt_payload.get("sources") if isinstance(receipt_payload.get("sources"), list) else [],
-        canonical_u,
-    )
     receipt_payload["url_analyzed"] = url
     receipt_payload["canonical_url"] = canonical_u
     receipt_payload["retrieval_timestamp"] = retrieval_ts
     receipt_payload["content_sha256"] = content_sha256
-    receipt_payload["parser_extraction_version"] = PARSER_EXTRACTION_VERSION
-    receipt_payload["claim_extraction_version"] = CLAIM_EXTRACTION_VERSION
-    receipt_payload["audit_rubric_version"] = AUDIT_RUBRIC_VERSION
-    receipt_payload["claim_audits"] = claim_audits
-    receipt_payload["omission_analysis"] = omission_analysis
-    receipt_payload["audit_unknowns"] = audit_unknowns
-    receipt_payload["article_disposition"] = article_disposition
-    receipt_payload["source_ledger"] = source_ledger
-    receipt_payload["audit_summary_one_liner"] = build_audit_summary_one_liner(
-        claims_extracted=int(receipt_payload.get("claims_extracted") or 0),
-        claim_audits=claim_audits,
-        omission_analysis=omission_analysis,
-        audit_unknowns=audit_unknowns,
+
+    author_raw = article.get("author")
+    display_journalist = str(author_raw).strip() if author_raw else ""
+    outlet_label = str(article.get("publication") or "").strip() or outlet_domain
+
+    journalist_raw = await build_journalist_investigation_record(
+        display_name=display_journalist,
+        publication=outlet_label,
+        article_url=canonical_u,
+        article_topic=receipt_payload.get("article_topic"),
+        article_text=body_text,
+        named_entities=list(receipt_payload.get("named_entities") or []),
+        linked_article_analysis_id=rid,
+    )
+    outlet_raw = await build_outlet_investigation_record(
+        outlet_display=outlet_label,
+        domain=outlet_domain,
+        linked_article_analysis_id=rid,
+        article_url=canonical_u,
     )
 
     signed_payload = attach_article_analysis_signing(receipt_payload)
+    journalist_signed = attach_journalist_investigation_signing(journalist_raw)
+    outlet_signed = attach_outlet_investigation_signing(outlet_raw)
+    signed_payload["journalist_receipt"] = journalist_signed
+    signed_payload["outlet_receipt"] = outlet_signed
+
+    _js = journalist_signed if isinstance(journalist_signed, dict) else {}
+    _os = outlet_signed if isinstance(outlet_signed, dict) else {}
+    _sub_j = _js.get("subject") if isinstance(_js.get("subject"), dict) else {}
+    _sub_o = _os.get("subject") if isinstance(_os.get("subject"), dict) else {}
+    signed_payload["journalist_entity_slug"] = compute_journalist_entity_slug(
+        {"display_name": _sub_j.get("display_name")} if _sub_j.get("display_name") else None,
+    )
+    signed_payload["outlet_entity_slug"] = compute_outlet_entity_slug(
+        {"outlet": _sub_o.get("outlet"), "domain": _sub_o.get("domain")}
+        if (_sub_o.get("outlet") or _sub_o.get("domain"))
+        else None,
+        article,
+    )
+
     try:
         store_receipt(signed_payload)
+        if isinstance(journalist_signed, dict) and journalist_signed.get("report_id"):
+            store_receipt(journalist_signed)
+        if isinstance(outlet_signed, dict) and outlet_signed.get("report_id"):
+            store_receipt(outlet_signed)
     except Exception:  # noqa: BLE001
         pass
 
-    asyncio.create_task(_background_entity_pipeline(signed_payload, url))
-
-    cov_summary = signed_payload.get("coverage_result") or {}
-    sp_fin = signed_payload.get("source_provenance")
-    grounded_fin = bool(
-        isinstance(sp_fin, dict) and sp_fin.get("coverage_found") is True
-    )
     logger.info(
-        "[ANALYZE] Complete | url=%r | coverage=%s | adapter=%s | gdelt_stage=%s "
-        "| grounded=%s | receipt_id=%s",
+        "[ANALYZE] Complete | url=%r | claims=%s | article_id=%s | journalist_id=%s | outlet_id=%s",
         url,
-        cov_summary.get("coverage_found"),
-        cov_summary.get("source_adapter") or "none",
-        cov_summary.get("gdelt_stage") if cov_summary.get("gdelt_stage") is not None else "-",
-        grounded_fin,
-        signed_payload.get("report_id", signed_payload.get("receipt_id", "-")),
+        receipt_payload.get("claims_extracted"),
+        signed_payload.get("report_id"),
+        journalist_signed.get("report_id") if isinstance(journalist_signed, dict) else None,
+        outlet_signed.get("report_id") if isinstance(outlet_signed, dict) else None,
     )
     return signed_payload
 
@@ -5849,6 +5617,11 @@ async def podcast_investigate(
     enrichment, Layer Zero, signed receipt. Returns job_id immediately;
     poll /v1/jobs/{job_id} for result.
     """
+    if not _public_eye_podcast_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Podcast pipeline disabled (set PUBLIC_EYE_PODCAST_ENABLED=1 to enable).",
+        )
     if not request.source_url:
         raise HTTPException(status_code=400, detail="source_url is required")
 
@@ -6216,6 +5989,11 @@ async def podcast_investigate_upload(
     Same pipeline as /v1/podcast-investigate but accepts an uploaded file.
     Returns job_id immediately. Poll /v1/jobs/{job_id} for result.
     """
+    if not _public_eye_podcast_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Podcast pipeline disabled (set PUBLIC_EYE_PODCAST_ENABLED=1 to enable).",
+        )
     data = await file.read()
     filename = file.filename or "upload.mp3"
     tier_enum = resolve_tier(x_whistle_tier, tier)
@@ -6444,6 +6222,11 @@ async def podcast_investigate_upload(
 @app.post("/v1/analyze-podcast")
 async def analyze_podcast(request: Request) -> dict[str, Any]:
     """Transcribe + extract claims from YouTube, podcast RSS, or uploaded audio (30 min cap)."""
+    if not _public_eye_podcast_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Podcast pipeline disabled (set PUBLIC_EYE_PODCAST_ENABLED=1 to enable).",
+        )
     ct = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" in ct:
         form = await request.form()
@@ -6466,6 +6249,11 @@ async def analyze_podcast(request: Request) -> dict[str, Any]:
 @app.post("/v1/analyze-and-verify-podcast")
 async def analyze_and_verify_podcast(request: Request) -> dict[str, Any]:
     """Podcast pipeline → sign receipt → receiptUrl → entity index."""
+    if not _public_eye_podcast_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Podcast pipeline disabled (set PUBLIC_EYE_PODCAST_ENABLED=1 to enable).",
+        )
     ct = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" in ct:
         form = await request.form()
@@ -6575,7 +6363,15 @@ async def verify_receipt(request: Request) -> dict[str, Any]:
     if data.get("receipt_type") and ch and sig_b64 and pub_key_b64:
         receipt_type = data.get("receipt_type", "")
         if receipt_type == "article_analysis":
-            narrow = build_article_analysis_signing_body(data)
+            sv = str(data.get("schema_version") or "")
+            if sv.startswith("1."):
+                narrow = build_article_analysis_signing_body_legacy_v1(data)
+            else:
+                narrow = build_article_analysis_signing_body(data)
+        elif receipt_type == "journalist_investigation":
+            narrow = build_journalist_signing_body(data)
+        elif receipt_type == "outlet_investigation":
+            narrow = build_outlet_signing_body(data)
         else:
             narrow = {
                 k: v

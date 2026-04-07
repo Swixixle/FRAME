@@ -22,7 +22,7 @@ VERSIONING POLICY:
     MINOR bump  → new fields added (backward compatible)
     PATCH bump  → cosmetic / metadata only changes
 
-Current: 1.0.0
+Current: 2.0.0 (PUBLIC EYE slim pipeline — see SCHEMA_CHANGELOG).
 """
 
 from __future__ import annotations
@@ -43,9 +43,15 @@ SCHEMA_CHANGELOG = {
         "timestamp, narrative, confirmed, what_nobody_is_covering, timeline, "
         "sources, global_perspectives, depth_layers.",
     ),
+    "2.0.0": (
+        "2026-04-06",
+        "Slim live pass: article_analysis signing body drops coalition/comparative/coverage/"
+        "global_perspectives/contextual_brief/echo/proportionality/entity sidecars; "
+        "journalist_investigation and outlet_investigation are separate signed receipts.",
+    ),
 }
 
-CURRENT_SCHEMA_VERSION = "1.0.0"
+CURRENT_SCHEMA_VERSION = "2.0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +107,10 @@ def assert_receipt_version_compatible(receipt: dict[str, Any]) -> None:
         )
 
     if receipt_major < current_major:
+        # 1.x receipts remain structurally verifiable with legacy signing-body rules
+        # when handled by the verify endpoint’s article_analysis v1 path.
+        if receipt_major == 1:
+            return
         raise ValueError(
             f"Receipt schema_version {version} is from an older major version "
             f"and is no longer supported by this verifier ({CURRENT_SCHEMA_VERSION})."

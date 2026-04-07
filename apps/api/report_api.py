@@ -44,8 +44,8 @@ def _jcs_canonicalize(obj: Any) -> str:
     return jcs_dumps(obj)
 
 
-def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
-    """Semantic slice hashed for `content_hash` / Ed25519 (must match attach_article_analysis_signing)."""
+def build_article_analysis_signing_body_legacy_v1(body: dict[str, Any]) -> dict[str, Any]:
+    """Signing slice for schema 1.x article_analysis receipts (verify only)."""
     generated_at = body.get("generated_at") or _now_iso()
     signing_body: dict[str, Any] = {
         "receipt_type": body.get("receipt_type"),
@@ -86,6 +86,76 @@ def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
     for k in ("journalist_dossier", "outlet_dossier", "absence_signal", "proportionality_records"):
         if k in body:
             signing_body[k] = body[k]
+    sv = body.get("schema_version")
+    if sv is not None:
+        signing_body["schema_version"] = sv
+    return signing_body
+
+
+def build_article_analysis_signing_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Semantic slice for `article_analysis` (slim pipeline, schema 2.x)."""
+    generated_at = body.get("generated_at") or _now_iso()
+    signing_body: dict[str, Any] = {
+        "receipt_type": body.get("receipt_type"),
+        "article": body.get("article"),
+        "article_topic": body.get("article_topic"),
+        "named_entities": body.get("named_entities") or [],
+        "claims_extracted": body.get("claims_extracted"),
+        "claims_verified": body.get("claims_verified") or [],
+        "sources_checked": body.get("sources_checked") or [],
+        "extraction_error": body.get("extraction_error"),
+        "generated_at": generated_at,
+    }
+    for k in ("url_analyzed", "canonical_url", "retrieval_timestamp", "content_sha256"):
+        if k in body and body[k] is not None:
+            signing_body[k] = body[k]
+    sv = body.get("schema_version")
+    if sv is not None:
+        signing_body["schema_version"] = sv
+    return signing_body
+
+
+def build_journalist_signing_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Semantic slice for `journalist_investigation` receipts."""
+    signing_body: dict[str, Any] = {
+        "receipt_type": body.get("receipt_type"),
+        "report_id": body.get("report_id"),
+        "generated_at": body.get("generated_at"),
+        "subject": body.get("subject"),
+        "linked_article_analysis_id": body.get("linked_article_analysis_id"),
+        "linked_article_url": body.get("linked_article_url"),
+        "data_sources": body.get("data_sources") or [],
+        "fec_donations": body.get("fec_donations"),
+        "courtlistener_opinions": body.get("courtlistener_opinions"),
+        "congress_member": body.get("congress_member"),
+        "congress_votes": body.get("congress_votes"),
+        "congress_bills": body.get("congress_bills"),
+        "sec_edgar": body.get("sec_edgar"),
+        "lda_filings": body.get("lda_filings"),
+        "quoted_sources": body.get("quoted_sources") or [],
+    }
+    sv = body.get("schema_version")
+    if sv is not None:
+        signing_body["schema_version"] = sv
+    return signing_body
+
+
+def build_outlet_signing_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Semantic slice for `outlet_investigation` receipts."""
+    signing_body: dict[str, Any] = {
+        "receipt_type": body.get("receipt_type"),
+        "report_id": body.get("report_id"),
+        "generated_at": body.get("generated_at"),
+        "subject": body.get("subject"),
+        "linked_article_analysis_id": body.get("linked_article_analysis_id"),
+        "linked_article_url": body.get("linked_article_url"),
+        "data_sources": body.get("data_sources") or [],
+        "courtlistener_opinions": body.get("courtlistener_opinions"),
+        "sec_edgar": body.get("sec_edgar"),
+        "fec_snapshot": body.get("fec_snapshot"),
+        "lda_filings": body.get("lda_filings"),
+        "irs990": body.get("irs990"),
+    }
     sv = body.get("schema_version")
     if sv is not None:
         signing_body["schema_version"] = sv
@@ -185,6 +255,55 @@ def attach_article_analysis_signing(body: dict[str, Any]) -> dict[str, Any]:
             "signed": False,
             "signing_error": str(exc),
         }
+
+
+def _attach_investigation_signing(
+    body: dict[str, Any],
+    build_fn: Any,
+    label: str,
+) -> dict[str, Any]:
+    from frame_crypto import sign_frame_digest_hex
+
+    stamp_receipt_version(body)
+    generated_at = body.get("generated_at") or _now_iso()
+    body = {**body, "generated_at": generated_at}
+    signing_body = build_fn(body)
+    try:
+        canon = _jcs_canonicalize(signing_body)
+        content_hash = hashlib.sha256(canon.encode("utf-8")).hexdigest()
+        signature = sign_frame_digest_hex(content_hash)
+        public_key = _frame_public_key_spki_b64()
+        short = content_hash[:16]
+        merged = {**body, "generated_at": generated_at}
+        return {
+            **merged,
+            "content_hash": content_hash,
+            "signature": signature,
+            "signed": True,
+            "signed_at": generated_at,
+            "public_key": public_key,
+            "receipt_url": f"/v1/receipts/report/{short}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        _LOG.exception("%s signing failed", label)
+        return {
+            **body,
+            "generated_at": generated_at,
+            "content_hash": None,
+            "signature": None,
+            "public_key": None,
+            "signed": False,
+            "signed_at": None,
+            "signing_error": str(exc),
+        }
+
+
+def attach_journalist_investigation_signing(body: dict[str, Any]) -> dict[str, Any]:
+    return _attach_investigation_signing(body, build_journalist_signing_body, "Journalist investigation")
+
+
+def attach_outlet_investigation_signing(body: dict[str, Any]) -> dict[str, Any]:
+    return _attach_investigation_signing(body, build_outlet_signing_body, "Outlet investigation")
 
 
 def _now_iso() -> str:
