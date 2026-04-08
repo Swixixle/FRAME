@@ -1807,6 +1807,8 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
         return ""
     sub = jr.get("subject") if isinstance(jr.get("subject"), dict) else {}
     name = str(sub.get("display_name") or "").strip()
+    if not name:
+        return ""
     pub = str(sub.get("publication") or "").strip()
     rid_j = str(jr.get("report_id") or "").strip()
     signed = jr.get("signed") is True
@@ -1867,9 +1869,6 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
                 'font-weight:600;margin-bottom:8px">CourtListener (public records)</div>'
                 '<ul style="margin:0;padding-left:18px;font-size:15px;color:#333">' + "".join(cls) + "</ul></div>"
             )
-
-    if not name and not pub and not rid_j and not layer_rows and not fec_html and not cl_html:
-        return ""
 
     inner: list[str] = [
         '<section class="journalist-receipt-section inv-paper-card" style="margin-bottom:32px;'

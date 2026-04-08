@@ -111,6 +111,14 @@ def _looks_like_author_url(s: str) -> bool:
     return "/author/" in s
 
 
+def author_field_needs_resolution(author_raw: Any) -> bool:
+    """True when author is missing or only URL-like (needs HTML extraction or slug normalization)."""
+    raw = _coerce_author_raw(author_raw)
+    if not raw:
+        return True
+    return _looks_like_author_url(raw)
+
+
 def _title_case_token(w: str) -> str:
     if not w:
         return ""

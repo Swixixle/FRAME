@@ -117,6 +117,7 @@ from first_class_investigation import (
     build_journalist_investigation_record,
     build_outlet_investigation_record,
 )
+from journalist_byline_normalize import normalize_journalist_display_name
 from services.entity_persistence import compute_journalist_entity_slug, compute_outlet_entity_slug
 from deep_receipt_api import build_deep_receipt
 from lens_api import process_audio, process_document_image, process_media_url, process_place_image
@@ -1942,6 +1943,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
 
     logger.info("[ANALYZE] Start | url=%r", url)
 
+    # Author resolution (meta, JSON-LD, rel=author, byline CSS, URL slug) runs inside fetch_article.
     article = await asyncio.to_thread(fetch_article, url)
     if article.get("fetch_error"):
         raise HTTPException(
@@ -2273,18 +2275,20 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     receipt_payload["content_sha256"] = content_sha256
 
     author_raw = article.get("author")
-    display_journalist = str(author_raw).strip() if author_raw else ""
+    display_journalist, _author_names_full = normalize_journalist_display_name(author_raw)
     outlet_label = str(article.get("publication") or "").strip() or outlet_domain
 
-    journalist_raw = await build_journalist_investigation_record(
-        display_name=display_journalist,
-        publication=outlet_label,
-        article_url=canonical_u,
-        article_topic=receipt_payload.get("article_topic"),
-        article_text=body_text,
-        named_entities=list(receipt_payload.get("named_entities") or []),
-        linked_article_analysis_id=rid,
-    )
+    journalist_raw: dict[str, Any] | None = None
+    if (display_journalist or "").strip():
+        journalist_raw = await build_journalist_investigation_record(
+            display_name=display_journalist,
+            publication=outlet_label,
+            article_url=canonical_u,
+            article_topic=receipt_payload.get("article_topic"),
+            article_text=body_text,
+            named_entities=list(receipt_payload.get("named_entities") or []),
+            linked_article_analysis_id=rid,
+        )
     outlet_raw = await build_outlet_investigation_record(
         outlet_display=outlet_label,
         domain=outlet_domain,
@@ -2293,7 +2297,9 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
     )
 
     signed_payload = attach_article_analysis_signing(receipt_payload)
-    journalist_signed = attach_journalist_investigation_signing(journalist_raw)
+    journalist_signed = (
+        attach_journalist_investigation_signing(journalist_raw) if journalist_raw is not None else None
+    )
     outlet_signed = attach_outlet_investigation_signing(outlet_raw)
     signed_payload["journalist_receipt"] = journalist_signed
     signed_payload["outlet_receipt"] = outlet_signed
@@ -2326,7 +2332,7 @@ async def analyze_article_post(body: AnalyzeArticleBody) -> dict[str, Any]:
         url,
         receipt_payload.get("claims_extracted"),
         signed_payload.get("report_id"),
-        journalist_signed.get("report_id") if isinstance(journalist_signed, dict) else None,
+        (journalist_signed.get("report_id") if isinstance(journalist_signed, dict) else None),
         outlet_signed.get("report_id") if isinstance(outlet_signed, dict) else None,
     )
     return signed_payload
