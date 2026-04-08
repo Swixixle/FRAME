@@ -1829,6 +1829,125 @@ def _layer_b_labeled_row_html(rec: Any, heading: str) -> str:
     )
 
 
+def _byline_corpus_section_html(corpus: Any) -> str:
+    """GDELT byline corpus rows — same slab style as Layer B."""
+    if not isinstance(corpus, list) or not corpus:
+        return ""
+    rows: list[str] = []
+    for row in corpus[:10]:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        title = str(row.get("title") or "Article").strip()
+        dom = str(row.get("domain") or "").strip()
+        dt = str(row.get("seendate") or "").strip()
+        if len(dt) > 12 and "T" in dt:
+            dt = dt.replace("T", " ").rstrip("Z")[:16]
+        meta_bits = [b for b in (dom, dt) if b]
+        meta = " · ".join(_e(b) for b in meta_bits)
+        if url.startswith("http"):
+            title_html = (
+                f'<a href="{_e(url)}" target="_blank" rel="noopener" style="color:#0d47a1;font-weight:600">'
+                f"{_e(title)}</a>"
+            )
+        else:
+            title_html = _e(title)
+        line = f'<div style="font-size:15px;color:#333;line-height:1.5;margin-bottom:10px">{title_html}'
+        if meta:
+            line += f'<div style="font-size:13px;color:#666;margin-top:4px">{meta}</div>'
+        line += "</div>"
+        rows.append(line)
+    if not rows:
+        return ""
+    return (
+        '<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(26,26,26,0.08)">'
+        '<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;'
+        'color:#555;font-weight:600;margin-bottom:10px">Byline corpus (GDELT)</div>'
+        + "".join(rows)
+        + "</div>"
+    )
+
+
+def _narrative_echo_section_html(echo: Any) -> str:
+    """Narrative echo / concentration — same slab style as Layer B."""
+    if not isinstance(echo, dict) or "total_articles" not in echo:
+        return ""
+    ta = int(echo.get("total_articles") or 0)
+    ud = int(echo.get("unique_domains") or 0)
+    uc = int(echo.get("unique_countries") or 0)
+    raw_score = echo.get("echo_score")
+    try:
+        es = float(raw_score) if raw_score is not None else 0.0
+    except (TypeError, ValueError):
+        es = 0.0
+    pct = round(es * 100.0, 2)
+
+    lines: list[str] = []
+    if ta == 0:
+        lines.append(
+            '<p style="margin:0 0 10px;font-size:15px;color:#333;line-height:1.55">'
+            "No matching coverage found in 48-hour window"
+            "</p>"
+        )
+    else:
+        lines.append(
+            f'<p style="margin:0 0 8px;font-size:15px;color:#333;line-height:1.55">'
+            f"Articles sampled: <strong>{ta}</strong> · Unique domains: <strong>{ud}</strong> · "
+            f"Unique countries: <strong>{uc}</strong> · Echo score: <strong>{pct}%</strong> "
+            f"<span style=\"color:#666;font-weight:400\">(domains ÷ articles)</span>"
+            f"</p>"
+        )
+        if ta > 0 and es < 0.3:
+            lines.append(
+                '<p style="margin:0 0 8px;font-size:13px;color:#333;line-height:1.45">'
+                '<span style="font-size:11px;font-weight:700;letter-spacing:0.08em;'
+                'text-transform:uppercase;color:#8b4513">High concentration</span>'
+                " — few outlets, many articles"
+                "</p>"
+            )
+        elif ta > 10 and es > 0.7:
+            lines.append(
+                '<p style="margin:0 0 8px;font-size:13px;color:#333;line-height:1.45">'
+                '<span style="font-size:11px;font-weight:700;letter-spacing:0.08em;'
+                'text-transform:uppercase;color:#1a5276">Wide distribution</span>'
+                "</p>"
+            )
+
+    top = echo.get("top_domains")
+    pills = ""
+    if isinstance(top, list) and top:
+        parts: list[str] = []
+        for item in top[:15]:
+            if isinstance(item, dict):
+                d = str(item.get("domain") or "").strip()
+                n = item.get("articles")
+                lab = f"{d} ({n})" if d and n is not None else (d or "")
+            else:
+                lab = str(item).strip()
+            if not lab:
+                continue
+            parts.append(
+                '<span style="font-size:11px;padding:3px 10px;border-radius:999px;'
+                "border:1px solid rgba(26,26,26,0.2);color:#333;display:inline-block;margin:0 6px 6px 0"
+                f'">{_e(lab)}</span>'
+            )
+        if parts:
+            pills = (
+                '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">'
+                + "".join(parts)
+                + "</div>"
+            )
+
+    body = "".join(lines) + pills
+    return (
+        '<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(26,26,26,0.08)">'
+        '<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;'
+        'color:#555;font-weight:600;margin-bottom:10px">Narrative echo</div>'
+        f"{body}"
+        "</div>"
+    )
+
+
 def _journalist_receipt_section_html(receipt: dict) -> str:
     """Journalist investigation card: heading = name, subheading = publication; Layer B as labeled rows."""
     jr = receipt.get("journalist_receipt")
@@ -1953,6 +2072,8 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
         )
     if layer_rows:
         inner.append(layer_rows)
+    inner.append(_byline_corpus_section_html(jr.get("byline_corpus")))
+    inner.append(_narrative_echo_section_html(jr.get("narrative_echo")))
     inner.append(fec_html)
     inner.append(cl_html)
     if layer_rows:
