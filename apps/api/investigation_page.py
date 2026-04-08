@@ -1409,6 +1409,8 @@ def _claims_section_html(receipt: dict[str, Any]) -> str:
             claim_text = str(c.get("claim", "") or "").strip()
             cited = c.get("cited_source")
             cited_s = str(cited).strip() if cited else ""
+            if cited_s.lower() == "none cited":
+                cited_s = ""
             rumor_src_raw = str(c.get("rumor_source", "") or "").strip()
             rumor_lang = str(c.get("rumor_language", "") or "").strip()
             claim_type = str(c.get("claim_type", "") or "").strip()
@@ -1450,11 +1452,6 @@ def _claims_section_html(receipt: dict[str, Any]) -> str:
                     cited_html = (
                         f'<div class="cited-source">Article cited: <strong>{_e(cited_s)}</strong></div>'
                     )
-            elif ctype_l != "rumored":
-                cited_html = (
-                    '<div style="font-size:15px;color:#6b7280;margin:8px 0 6px">'
-                    "Cited source: none cited</div>"
-                )
 
             rumor_html = ""
             if ctype_l == "rumored":
@@ -1568,7 +1565,32 @@ _LAYER_B_EMPTY_PHRASES = (
     "nothing found",
     "did not find",
     "didn't find",
+    "no results",
+    "not found in",
+    "search results do not contain",
+    "search results don't contain",
 )
+
+_LAYER_B_HEDGE_PHRASES = (
+    "i cannot provide",
+    "i can't provide",
+    "i cannot identify",
+    "i can't identify",
+    "i cannot find",
+    "i can't find",
+    "i would need",
+    "i'd need",
+    "unable to provide",
+    "cannot provide specifics",
+    "i am unable to",
+    "i'm unable to",
+    "i do not have access",
+    "i don't have access",
+    "based on the search results provided, i cannot",
+    "the available search results",
+)
+
+_LAYER_B_DISPLAY_MAX_CHARS = 400
 
 
 def _strip_layer_b_citation_artifacts(raw: str) -> str:
@@ -1579,37 +1601,131 @@ def _strip_layer_b_citation_artifacts(raw: str) -> str:
     return s
 
 
-def _layer_b_plain_gate_text(text: Any) -> str:
-    s = _strip_layer_b_citation_artifacts(str(text or "")).strip()
-    s = re.sub(r"\*\*(.+?)\*\*", r"\1", s, flags=re.DOTALL)
-    s = re.sub(r"__(.+?)__", r"\1", s, flags=re.DOTALL)
-    s = re.sub(r"(?<!\\)\*(?!\*)(.+?)(?<!\\)\*(?!\*)", r"\1", s, flags=re.DOTALL)
+def _strip_layer_b_markdown_headers(raw: str) -> str:
+    """Remove ATX # headers at line starts (e.g. ### Beat history)."""
+    s = str(raw or "")
+    s = re.sub(r"(?m)^#{1,6}\s*[^\n]*\n?", "", s)
+    s = re.sub(r"(?m)^#{1,6}\s*$", "", s)
+    return s
+
+
+def _normalize_layer_b_underscore_bold(raw: str) -> str:
+    return re.sub(
+        r"__(.+?)__",
+        lambda m: f"**{m.group(1).strip()}**",
+        str(raw or ""),
+        flags=re.DOTALL,
+    )
+
+
+def _layer_b_plain_for_gate(text: str) -> str:
+    """Plain text for hedging / empty detection (no HTML)."""
+    s = _strip_layer_b_markdown_headers(text)
+    s = _strip_layer_b_citation_artifacts(s)
+    s = _normalize_layer_b_underscore_bold(s)
+    while True:
+        m = re.search(r"\*\*(.+?)\*\*", s, flags=re.DOTALL)
+        if not m:
+            break
+        s = s[:m.start()] + m.group(1) + s[m.end() :]
     s = re.sub(r"`+([^`]+)`+", r"\1", s)
-    s = re.sub(r"#+\s*", "", s)
+    s = re.sub(r"(?m)^>\s?", "", s)
     return " ".join(s.split()).strip()
 
 
-def _layer_b_rich_html(raw: Any) -> str:
-    """Turn Layer B prose into HTML: **bold** / __bold__ → strong; strip [n]** artifacts; escape safely."""
-    s = _strip_layer_b_citation_artifacts(str(raw or "").strip())
+def _layer_b_first_sentence(text: str) -> str:
+    """First sentence for lede; falls back to first line if no . ! ? terminator."""
+    s = (text or "").strip()
     if not s:
         return ""
-    s = re.sub(
-        r"__(.+?)__",
-        lambda m: f"**{m.group(1).strip()}**",
-        s,
-        flags=re.DOTALL,
-    )
-    parts = re.split(r"(\*\*.+?\*\*)", s, flags=re.DOTALL)
+    m = re.match(r"^([^.!?]*[.!?])(?:\s+|$)", s, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    line = s.split("\n", 1)[0].strip()
+    return line if line else s
+
+
+def _layer_b_plain_gate_text(text: Any) -> str:
+    """Backward-compatible alias: full string plain."""
+    return _layer_b_plain_for_gate(str(text or ""))
+
+
+def _layer_b_preprocess_for_display(raw: Any) -> str:
+    """Strip headers / artifacts / footnote noise; normalize __bold__ markers to **."""
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    s = _strip_layer_b_markdown_headers(s)
+    s = _strip_layer_b_citation_artifacts(s)
+    s = _normalize_layer_b_underscore_bold(s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _layer_text_fails_hedge_or_empty(plain: str) -> bool:
+    if not plain:
+        return True
+    low = plain.lower()
+    if low.startswith("i cannot") or low.startswith("i can't") or low.startswith("no "):
+        return True
+    for phrase in _LAYER_B_EMPTY_PHRASES:
+        if phrase in low:
+            return True
+    for phrase in _LAYER_B_HEDGE_PHRASES:
+        if phrase in low:
+            return True
+    return False
+
+
+def _layer_b_rich_html_from_cleaned(s: str) -> str:
+    """**…** → <strong> across newlines; unmatched ** dropped."""
+    if not s:
+        return ""
+    s = _normalize_layer_b_underscore_bold(s)
     out: list[str] = []
-    for p in parts:
-        if len(p) >= 4 and p.startswith("**") and p.endswith("**"):
-            inner = p[2:-2].strip()
-            out.append(f"<strong>{html.escape(inner)}</strong>")
-        else:
-            out.append(html.escape(p))
+    rest = s
+    while "**" in rest:
+        i = rest.find("**")
+        out.append(html.escape(rest[:i]))
+        rest = rest[i + 2 :]
+        j = rest.find("**")
+        if j < 0:
+            out.append(html.escape("**" + rest))
+            rest = ""
+            break
+        out.append(f"<strong>{html.escape(rest[:j])}</strong>")
+        rest = rest[j + 2 :]
+    if rest:
+        out.append(html.escape(rest))
     joined = "".join(out)
+    joined = re.sub(r"\*+", "", joined)
     return joined.replace("\n", "<br />")
+
+
+def _layer_b_display_body(rec: dict) -> str | None:
+    """
+    First sentence only if it is concrete; max _LAYER_B_DISPLAY_MAX_CHARS.
+    Returns None if the row should not show narrative text.
+    """
+    raw = rec.get("text")
+    if raw is None or str(raw).strip() == "":
+        return None
+    pre = _layer_b_preprocess_for_display(raw)
+    if not pre:
+        return None
+    first = _layer_b_first_sentence(pre)
+    if not first:
+        return None
+    plain_first = _layer_b_plain_for_gate(first)
+    if _layer_text_fails_hedge_or_empty(plain_first):
+        return None
+    text = first.strip()
+    if len(text) > _LAYER_B_DISPLAY_MAX_CHARS:
+        cut = text[: _LAYER_B_DISPLAY_MAX_CHARS]
+        if " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        text = cut.rstrip(".,; ") + "…"
+    return text
 
 
 def _citation_pills_html(cites: Any, *, max_n: int = 12) -> str:
@@ -1648,29 +1764,25 @@ def _citation_pills_html(cites: Any, *, max_n: int = 12) -> str:
 def _layer_b_row_should_show(rec: Any) -> bool:
     if not isinstance(rec, dict):
         return False
-    plain = _layer_b_plain_gate_text(rec.get("text"))
     cites = rec.get("citations") if isinstance(rec.get("citations"), list) else []
     cites_n = [c for c in cites if str(c).strip().startswith("http")]
+    if _layer_b_display_body(rec):
+        return True
     if cites_n:
         return True
-    if not plain:
-        return False
-    low = plain.lower()
-    for phrase in _LAYER_B_EMPTY_PHRASES:
-        if phrase in low:
-            return False
     if rec.get("ok") is False:
         det = str(rec.get("detail") or "").lower()
         if any(x in det for x in ("no_journalist", "skipped", "timeout")):
             return False
-    return True
+    return False
 
 
 def _layer_b_labeled_row_html(rec: Any, heading: str) -> str:
     if not _layer_b_row_should_show(rec):
         return ""
     assert isinstance(rec, dict)
-    body_html = _layer_b_rich_html(rec.get("text") or "")
+    body_src = _layer_b_display_body(rec)
+    body_html = _layer_b_rich_html_from_cleaned(body_src) if body_src else ""
     pills = _citation_pills_html(rec.get("citations"))
     if rec.get("ok") is False and not body_html and not pills:
         return ""
