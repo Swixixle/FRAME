@@ -1886,7 +1886,7 @@ def _narrative_echo_section_html(echo: Any) -> str:
     if ta == 0:
         lines.append(
             '<p style="margin:0 0 10px;font-size:15px;color:#333;line-height:1.55">'
-            "No matching coverage found in 48-hour window"
+            "No matching coverage found in 72-hour window"
             "</p>"
         )
     else:

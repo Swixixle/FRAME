@@ -45,6 +45,20 @@ def _safe_phrase(text: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _echo_query_keywords(claim_text: str) -> str:
+    """First six words, punctuation stripped — broad keyword query for GDELT (no quotes)."""
+    t = _safe_phrase(claim_text)
+    if not t:
+        return ""
+    words = t.split()[:6]
+    cleaned: list[str] = []
+    for w in words:
+        w2 = re.sub(r"[^\w\-]", "", w, flags=re.UNICODE)
+        if w2:
+            cleaned.append(w2)
+    return " ".join(cleaned).strip()
+
+
 def _normalize_domain(publication: str) -> str:
     d = (publication or "").strip().lower()
     d = re.sub(r"^https?://", "", d)
@@ -195,20 +209,20 @@ async def search_byline_corpus(
     """
     Articles mentioning the journalist, scoped to outlet domain.
 
-    Uses ``domain:`` (GDELT-supported). ``sourced:`` is not reliably documented;
-    domain filter matches the intended outlet corpus.
+    GDELT accepts ``domain:`` inside the ``query`` string only (no separate URL param).
+    ``sourced:`` is not supported — use ``"{name}" domain:{domain}``, then name-only fallback.
     """
     name = _safe_phrase(journalist_name)
     dom = _normalize_domain(publication)
-    if not name or not dom:
+    if not name:
         return []
-    # GDELT query syntax: exact name + sourced: filter (falls back to domain-only if empty).
-    q = f'"{name}" sourced:{dom}'
-    rows = await _search_artlist_wrapped(query=q, timespan="2y", max_results=max_results)
-    if rows:
-        return rows
+    if dom:
+        q = f'"{name}" domain:{dom}'
+        rows = await _search_artlist_wrapped(query=q, timespan="2y", max_results=max_results)
+        if rows:
+            return rows
     return await _search_artlist_wrapped(
-        query=f'"{name}" domain:{dom}',
+        query=f'"{name}"',
         timespan="2y",
         max_results=max_results,
     )
@@ -216,14 +230,17 @@ async def search_byline_corpus(
 
 async def get_narrative_echo_score(
     claim_text: str,
-    hours: int = 48,
+    hours: int = 72,
+    *,
+    max_results: int = 250,
 ) -> dict[str, Any]:
     """
     Coverage concentration: echo_score = unique_domains / total_articles (0 if none).
 
-    Lower echo_score ⇒ more repeated domains (more concentrated sourcing).
+    Query uses the first six words of ``claim_text``, punctuation removed, **unquoted**
+    for broader GDELT matching. Lower echo_score ⇒ more repeated domains per article.
     """
-    phrase = _safe_phrase(claim_text)
+    phrase = _echo_query_keywords(claim_text)
     if len(phrase) < 3:
         return {
             "total_articles": 0,
@@ -235,9 +252,9 @@ async def get_narrative_echo_score(
 
     async def _go() -> dict[str, Any]:
         rows = await _search_artlist(
-            query=f'"{phrase}"',
+            query=phrase,
             timespan=f"{max(1, int(hours))}h",
-            max_results=250,
+            max_results=max(1, min(int(max_results), 250)),
         )
         if not rows:
             return {

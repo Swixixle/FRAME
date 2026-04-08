@@ -373,7 +373,7 @@ async def build_journalist_investigation_record(
     if topic_t:
 
         async def _gdelt_echo() -> dict[str, Any]:
-            return await get_narrative_echo_score(topic_t, hours=48)
+            return await get_narrative_echo_score(topic_t, hours=72)
 
         tasks.append(run_adapter(_gdelt_echo, adapter="gdelt_narrative_echo", timeout=GDELT_TIMEOUT))
 
