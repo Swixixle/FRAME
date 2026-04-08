@@ -1219,9 +1219,10 @@ def _build_verification_rows(claim: dict[str, Any]) -> str:
         if ad_k in _DEFERRED_NOISE_ADAPTER_KEYS and st_l == "deferred":
             continue
 
-        if ad_k == "courtlistener" and st_l in ("found", "searched_none_found"):
-            raw_r = v.get("result") if isinstance(v.get("result"), dict) else {}
-            rows.append(_courtlistener_verification_html(status, raw_r or {}))
+        if ad_k == "courtlistener":
+            if st_l == "found":
+                raw_r = v.get("result") if isinstance(v.get("result"), dict) else {}
+                rows.append(_courtlistener_verification_html(status, raw_r or {}))
             continue
 
         if _should_omit_verification_row(adapter, status, result, subject):
@@ -1265,7 +1266,7 @@ def _build_verification_rows(claim: dict[str, Any]) -> str:
         )
 
     if not rows:
-        return '<div class="verification-none">No independent verification found.</div>'
+        return ""
     return '<div class="verification-list">' + "".join(rows) + "</div>"
 
 
@@ -1544,63 +1545,151 @@ def _named_entities_section_html(receipt: dict) -> str:
             f"</a>"
         )
 
-    cleaned = [str(e).strip() for e in entities[:40] if str(e).strip()]
-    mid = (len(cleaned) + 1) // 2
-    row_a = cleaned[:mid]
-    row_b = cleaned[mid:]
-
-    top_html = "\n".join(_pill(e) for e in row_a)
-    bot_html = "\n".join(_pill(e) for e in row_b)
-    divider = '<div class="watcher-rule"></div>' if row_b else ""
-    bottom_row = f'<div class="eye-row watcher-row-b">{bot_html}</div>' if row_b else ""
+    cleaned = [str(e).strip() for e in entities[:6] if str(e).strip()]
+    row_html = "\n".join(_pill(e) for e in cleaned)
 
     return f"""
 <section class="named-entities-section">
   <h3 class="section-label">NAMED ENTITIES</h3>
-  <div class="eye-row watcher-row-a">{top_html}</div>
-  {divider}
-  {bottom_row}
+  <div class="eye-row watcher-row-a">{row_html}</div>
 </section>
 """
 
 
-def _sonar_field_html(rec: Any, title: str) -> str:
-    """Layer B Perplexity-style row: text + citations (escaped)."""
-    if not isinstance(rec, dict):
+_LAYER_B_EMPTY_PHRASES = (
+    "no results found",
+    "no result found",
+    "could not find",
+    "couldn't find",
+    "unable to find",
+    "i could not find",
+    "i couldn't find",
+    "no information found",
+    "nothing found",
+    "did not find",
+    "didn't find",
+)
+
+
+def _strip_layer_b_citation_artifacts(raw: str) -> str:
+    s = str(raw or "")
+    s = re.sub(r"\[\d+\]\*+", "", s)
+    s = re.sub(r"\[\d+\]\s*\*+", "", s)
+    s = re.sub(r"\[\d+\]", "", s)
+    return s
+
+
+def _layer_b_plain_gate_text(text: Any) -> str:
+    s = _strip_layer_b_citation_artifacts(str(text or "")).strip()
+    s = re.sub(r"\*\*(.+?)\*\*", r"\1", s, flags=re.DOTALL)
+    s = re.sub(r"__(.+?)__", r"\1", s, flags=re.DOTALL)
+    s = re.sub(r"(?<!\\)\*(?!\*)(.+?)(?<!\\)\*(?!\*)", r"\1", s, flags=re.DOTALL)
+    s = re.sub(r"`+([^`]+)`+", r"\1", s)
+    s = re.sub(r"#+\s*", "", s)
+    return " ".join(s.split()).strip()
+
+
+def _layer_b_rich_html(raw: Any) -> str:
+    """Turn Layer B prose into HTML: **bold** / __bold__ → strong; strip [n]** artifacts; escape safely."""
+    s = _strip_layer_b_citation_artifacts(str(raw or "").strip())
+    if not s:
         return ""
-    ok = rec.get("ok")
-    detail = str(rec.get("detail") or "").strip()
-    text = str(rec.get("text") or "").strip()
-    cites = rec.get("citations") if isinstance(rec.get("citations"), list) else []
-    if not text and not detail and not cites:
+    s = re.sub(
+        r"__(.+?)__",
+        lambda m: f"**{m.group(1).strip()}**",
+        s,
+        flags=re.DOTALL,
+    )
+    parts = re.split(r"(\*\*.+?\*\*)", s, flags=re.DOTALL)
+    out: list[str] = []
+    for p in parts:
+        if len(p) >= 4 and p.startswith("**") and p.endswith("**"):
+            inner = p[2:-2].strip()
+            out.append(f"<strong>{html.escape(inner)}</strong>")
+        else:
+            out.append(html.escape(p))
+    joined = "".join(out)
+    return joined.replace("\n", "<br />")
+
+
+def _citation_pills_html(cites: Any, *, max_n: int = 12) -> str:
+    if not isinstance(cites, list) or not cites:
         return ""
-    parts: list[str] = [
-        '<div style="margin-top:14px">',
-        f'<div style="font-size:12px;font-weight:600;color:#1a1a1a;margin-bottom:6px">{_e(title)}</div>',
-    ]
-    if ok is False and detail:
-        parts.append(f'<p style="font-size:14px;color:#888;margin:0 0 6px">{_e(detail)}</p>')
-    if text:
-        parts.append(
-            f'<p style="font-size:15px;color:#333;line-height:1.55;margin:0;white-space:pre-wrap">{_e(text)}</p>'
+    pills: list[str] = []
+    for u in cites[:max_n]:
+        su = str(u).strip() if u is not None else ""
+        if not su.startswith("http"):
+            continue
+        try:
+            host = (urlparse(su).netloc or "").lower()
+            if host.startswith("www."):
+                host = host[4:]
+            label = host or su[:40]
+        except Exception:  # noqa: BLE001
+            label = su[:48]
+        pill_style = (
+            "font-size:11px;padding:3px 10px;border-radius:999px;"
+            "border:1px solid rgba(26,26,26,0.2);color:#0d47a1;text-decoration:none;"
+            "display:inline-block;max-width:220px;overflow:hidden;"
+            "text-overflow:ellipsis;white-space:nowrap"
         )
-    if cites:
-        ul = ['<ul style="margin:8px 0 0;padding-left:18px;font-size:13px">']
-        for u in cites[:12]:
-            su = str(u).strip() if u is not None else ""
-            if not su:
-                continue
-            ul.append(
-                f'<li style="margin-bottom:4px"><a href="{_e(su)}" target="_blank" rel="noopener">{_e(su)}</a></li>'
-            )
-        ul.append("</ul>")
-        parts.append("".join(ul))
-    parts.append("</div>")
-    return "".join(parts)
+        pills.append(
+            f'<a href="{_e(su)}" target="_blank" rel="noopener" style="{pill_style}">{_e(label)}</a>'
+        )
+    if not pills:
+        return ""
+    return (
+        '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center">'
+        + "".join(pills)
+        + "</div>"
+    )
+
+
+def _layer_b_row_should_show(rec: Any) -> bool:
+    if not isinstance(rec, dict):
+        return False
+    plain = _layer_b_plain_gate_text(rec.get("text"))
+    cites = rec.get("citations") if isinstance(rec.get("citations"), list) else []
+    cites_n = [c for c in cites if str(c).strip().startswith("http")]
+    if cites_n:
+        return True
+    if not plain:
+        return False
+    low = plain.lower()
+    for phrase in _LAYER_B_EMPTY_PHRASES:
+        if phrase in low:
+            return False
+    if rec.get("ok") is False:
+        det = str(rec.get("detail") or "").lower()
+        if any(x in det for x in ("no_journalist", "skipped", "timeout")):
+            return False
+    return True
+
+
+def _layer_b_labeled_row_html(rec: Any, heading: str) -> str:
+    if not _layer_b_row_should_show(rec):
+        return ""
+    assert isinstance(rec, dict)
+    body_html = _layer_b_rich_html(rec.get("text") or "")
+    pills = _citation_pills_html(rec.get("citations"))
+    if rec.get("ok") is False and not body_html and not pills:
+        return ""
+    body_block = ""
+    if body_html:
+        body_block = (
+            f'<div style="font-size:16px;color:#333;line-height:1.65;margin:0">'
+            f'<p style="margin:0">{body_html}</p></div>'
+        )
+    return (
+        f'<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(26,26,26,0.08)">'
+        f'<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;'
+        f'color:#555;font-weight:600;margin-bottom:10px">{_e(heading)}</div>'
+        f"{body_block}{pills}</div>"
+    )
 
 
 def _journalist_receipt_section_html(receipt: dict) -> str:
-    """First-class journalist investigation receipt embedded on article_analysis (HTML page)."""
+    """Journalist investigation card: heading = name, subheading = publication; Layer B as labeled rows."""
     jr = receipt.get("journalist_receipt")
     if not isinstance(jr, dict):
         return ""
@@ -1609,34 +1698,16 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
     pub = str(sub.get("publication") or "").strip()
     rid_j = str(jr.get("report_id") or "").strip()
     signed = jr.get("signed") is True
-    head_line = ""
-    if name:
-        head_line = _e(name)
-        if pub:
-            head_line += f' <span style="color:#666;font-weight:400">· {_e(pub)}</span>'
+    link_u = str(jr.get("linked_article_url") or "").strip()
 
-    layer_parts: list[str] = []
-    lb = jr.get("layer_b")
-    if isinstance(lb, dict):
-        layer_parts.append(
-            _sonar_field_html(
-                lb.get("prior_coverage"),
-                "Prior coverage (Layer B — verify citations independently)",
-            )
-        )
-        layer_parts.append(_sonar_field_html(lb.get("prior_positions"), "Prior positions & beats"))
-        layer_parts.append(_sonar_field_html(lb.get("affiliations"), "Affiliations"))
-        layer_parts.append(
-            _sonar_field_html(lb.get("recant_candidates"), "Corrections & retractions (candidates)")
-        )
-        audits = lb.get("source_audits")
-        if isinstance(audits, list):
-            for a in audits:
-                if not isinstance(a, dict):
-                    continue
-                nm = str(a.get("source_name") or "").strip()
-                rest = {k: v for k, v in a.items() if k != "source_name"}
-                layer_parts.append(_sonar_field_html(rest, nm or "Source audit"))
+    lb = jr.get("layer_b") if isinstance(jr.get("layer_b"), dict) else {}
+    layer_order = (
+        ("Prior coverage", "prior_coverage"),
+        ("Affiliations", "affiliations"),
+        ("Prior positions", "prior_positions"),
+        ("Recant candidates", "recant_candidates"),
+    )
+    layer_rows = "".join(_layer_b_labeled_row_html(lb.get(key), label) for label, key in layer_order)
 
     fec_html = ""
     fec = jr.get("fec_donations")
@@ -1653,9 +1724,10 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
             rows.append(f"<li>{line}</li>")
         if rows:
             fec_html = (
-                '<div style="margin-top:12px"><div style="font-size:12px;font-weight:600;color:#555;'
-                'margin-bottom:4px">FEC Schedule A (name match)</div>'
-                '<ul style="margin:0;padding-left:18px;font-size:14px;color:#333">'
+                '<div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(26,26,26,0.08)">'
+                '<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#555;'
+                'font-weight:600;margin-bottom:8px">FEC Schedule A (name match)</div>'
+                '<ul style="margin:0;padding-left:18px;font-size:15px;color:#333;line-height:1.5">'
                 + "".join(rows)
                 + "</ul></div>"
             )
@@ -1668,40 +1740,59 @@ def _journalist_receipt_section_html(receipt: dict) -> str:
             if not isinstance(row, dict):
                 continue
             raw_u = str(row.get("url") or row.get("source_url") or "").strip()
-            title = str(row.get("case_name") or "Court opinion").strip()
+            cn = str(row.get("case_name") or "Court opinion").strip()
             if raw_u.startswith("http"):
                 cls.append(
                     f'<li style="margin-bottom:4px"><a href="{_e(raw_u)}" target="_blank" '
-                    f'rel="noopener">{_e(title)}</a></li>'
+                    f'rel="noopener">{_e(cn)}</a></li>'
                 )
             else:
-                cls.append(f"<li>{_e(title)}</li>")
+                cls.append(f"<li>{_e(cn)}</li>")
         if cls:
             cl_html = (
-                '<div style="margin-top:12px"><div style="font-size:12px;font-weight:600;color:#555;'
-                'margin-bottom:4px">CourtListener</div><ul style="margin:0;padding-left:18px;'
-                'font-size:14px;color:#333">' + "".join(cls) + "</ul></div>"
+                '<div style="margin-top:16px;padding-top:14px;border-top:1px solid rgba(26,26,26,0.08)">'
+                '<div style="font-size:12px;letter-spacing:0.1em;text-transform:uppercase;color:#555;'
+                'font-weight:600;margin-bottom:8px">CourtListener (public records)</div>'
+                '<ul style="margin:0;padding-left:18px;font-size:15px;color:#333">' + "".join(cls) + "</ul></div>"
             )
 
-    layer_block = "".join(p for p in layer_parts if p)
-    if not head_line and not rid_j and not fec_html and not cl_html and not layer_block:
+    if not name and not pub and not rid_j and not layer_rows and not fec_html and not cl_html:
         return ""
 
     inner: list[str] = [
         '<section class="journalist-receipt-section inv-paper-card" style="margin-bottom:32px;'
-        'padding:18px 22px;border:1px solid rgba(26,26,26,0.12);border-radius:6px">',
-        '<h3 class="section-label" style="margin-bottom:12px">JOURNALIST INVESTIGATION</h3>',
+        'padding:22px 24px;border:1px solid rgba(26,26,26,0.12);border-radius:6px">',
+        '<div style="font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:#888;'
+        'margin-bottom:10px;font-weight:600">Journalist investigation</div>',
     ]
-    if head_line:
-        inner.append(f'<p style="font-size:18px;font-weight:600;color:#1a1a1a;margin:0 0 8px">{head_line}</p>')
+    if name:
+        inner.append(
+            f'<h2 style="font-family:\'Playfair Display\',serif;font-size:clamp(22px,3vw,30px);'
+            f'font-weight:700;line-height:1.2;color:#1a1a1a;margin:0 0 6px">{_e(name)}</h2>'
+        )
+    if pub:
+        inner.append(
+            f'<p style="font-size:17px;color:#555;margin:0 0 12px;line-height:1.4">{_e(pub)}</p>'
+        )
+    if link_u.startswith("http"):
+        inner.append(
+            f'<p style="font-size:14px;margin:0 0 14px"><a href="{_e(link_u)}" target="_blank" '
+            f'rel="noopener" style="color:#0d47a1">Linked article ↗</a></p>'
+        )
     if rid_j:
         inner.append(
-            f'<p style="font-size:13px;color:#666;margin:0 0 8px">Receipt ID: <code>{_e(rid_j)}</code>'
-            f"{' · signed' if signed else ''}</p>"
+            f'<p style="font-size:12px;color:#888;margin:0 0 8px">Investigation receipt: '
+            f'<code style="font-size:12px">{_e(rid_j)}</code>{" · signed" if signed else ""}</p>'
         )
+    if layer_rows:
+        inner.append(layer_rows)
     inner.append(fec_html)
     inner.append(cl_html)
-    inner.append(layer_block)
+    if layer_rows:
+        inner.append(
+            '<p style="font-size:12px;color:#999;margin:18px 0 0;line-height:1.45">'
+            "Layer B — cited, not signed. Verify sources independently.</p>"
+        )
     inner.append("</section>")
     return "".join(inner)
 
@@ -2592,10 +2683,6 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     drift_section_html = (
         _drift_tracker_html(str(rid)) if (rtype == "article_analysis" and rid) else ""
     )
-    actors_section_html = (
-        _actors_map_html(str(rid)) if (rtype == "article_analysis" and rid) else ""
-    )
-
     # ── Coalition section ────────────────────────────────────────
     coalition_fight_html = ""
     coalition_tail_html = ""
@@ -3904,32 +3991,19 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 <div style="height:1px;background:rgba(26,26,26,0.2);margin-bottom:28px"></div>
 
-<!-- BILATERAL COLUMNS -->
-<div class="inv-bilateral">
+{journalist_receipt_html}
+{summary_block_html}
+{named_entities_html}
+{echo_standalone_html}
+{investigative_leads_html}
+{drift_section_html}
 
-  <!-- LEFT: primary analysis -->
-  <div class="inv-col-main">
-    {coalition_section}
-    {perspectives_block_html}
-    {absent_from_all_html}
-    {claims_section_html}
-    {journalist_receipt_html}
-    {coverage_block_html}
-  </div>
+{coalition_section}
+{perspectives_block_html}
+{absent_from_all_html}
+{claims_section_html}
+{coverage_block_html}
 
-  <!-- RIGHT: contextual sidebar -->
-  <div class="inv-col-side">
-    {summary_block_html}
-    {echo_standalone_html}
-    {investigative_leads_html}
-    {named_entities_html}
-    {drift_section_html}
-    {actors_section_html}
-  </div>
-
-</div><!-- /.inv-bilateral -->
-
-<!-- FULL-WIDTH BELOW THE FOLD -->
 <div class="inv-full-width">
 
 <!-- CROSS-CORROBORATED -->
