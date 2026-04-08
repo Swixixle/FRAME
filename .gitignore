@@ -32,3 +32,4 @@ venv/
 # Build / logs
 *.log
 .turbo/
+.cursor-profile-import/
