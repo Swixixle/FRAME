@@ -1564,6 +1564,148 @@ def _named_entities_section_html(receipt: dict) -> str:
 """
 
 
+def _sonar_field_html(rec: Any, title: str) -> str:
+    """Layer B Perplexity-style row: text + citations (escaped)."""
+    if not isinstance(rec, dict):
+        return ""
+    ok = rec.get("ok")
+    detail = str(rec.get("detail") or "").strip()
+    text = str(rec.get("text") or "").strip()
+    cites = rec.get("citations") if isinstance(rec.get("citations"), list) else []
+    if not text and not detail and not cites:
+        return ""
+    parts: list[str] = [
+        '<div style="margin-top:14px">',
+        f'<div style="font-size:12px;font-weight:600;color:#1a1a1a;margin-bottom:6px">{_e(title)}</div>',
+    ]
+    if ok is False and detail:
+        parts.append(f'<p style="font-size:14px;color:#888;margin:0 0 6px">{_e(detail)}</p>')
+    if text:
+        parts.append(
+            f'<p style="font-size:15px;color:#333;line-height:1.55;margin:0;white-space:pre-wrap">{_e(text)}</p>'
+        )
+    if cites:
+        ul = ['<ul style="margin:8px 0 0;padding-left:18px;font-size:13px">']
+        for u in cites[:12]:
+            su = str(u).strip() if u is not None else ""
+            if not su:
+                continue
+            ul.append(
+                f'<li style="margin-bottom:4px"><a href="{_e(su)}" target="_blank" rel="noopener">{_e(su)}</a></li>'
+            )
+        ul.append("</ul>")
+        parts.append("".join(ul))
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _journalist_receipt_section_html(receipt: dict) -> str:
+    """First-class journalist investigation receipt embedded on article_analysis (HTML page)."""
+    jr = receipt.get("journalist_receipt")
+    if not isinstance(jr, dict):
+        return ""
+    sub = jr.get("subject") if isinstance(jr.get("subject"), dict) else {}
+    name = str(sub.get("display_name") or "").strip()
+    pub = str(sub.get("publication") or "").strip()
+    rid_j = str(jr.get("report_id") or "").strip()
+    signed = jr.get("signed") is True
+    head_line = ""
+    if name:
+        head_line = _e(name)
+        if pub:
+            head_line += f' <span style="color:#666;font-weight:400">· {_e(pub)}</span>'
+
+    layer_parts: list[str] = []
+    lb = jr.get("layer_b")
+    if isinstance(lb, dict):
+        layer_parts.append(
+            _sonar_field_html(
+                lb.get("prior_coverage"),
+                "Prior coverage (Layer B — verify citations independently)",
+            )
+        )
+        layer_parts.append(_sonar_field_html(lb.get("prior_positions"), "Prior positions & beats"))
+        layer_parts.append(_sonar_field_html(lb.get("affiliations"), "Affiliations"))
+        layer_parts.append(
+            _sonar_field_html(lb.get("recant_candidates"), "Corrections & retractions (candidates)")
+        )
+        audits = lb.get("source_audits")
+        if isinstance(audits, list):
+            for a in audits:
+                if not isinstance(a, dict):
+                    continue
+                nm = str(a.get("source_name") or "").strip()
+                rest = {k: v for k, v in a.items() if k != "source_name"}
+                layer_parts.append(_sonar_field_html(rest, nm or "Source audit"))
+
+    fec_html = ""
+    fec = jr.get("fec_donations")
+    if isinstance(fec, list) and fec:
+        rows: list[str] = []
+        for row in fec[:8]:
+            if not isinstance(row, dict):
+                continue
+            amt = row.get("contribution_receipt_amount")
+            cn = str(row.get("contributor_name") or "").strip()
+            line = _e(cn or "Contribution")
+            if amt is not None:
+                line += f" — {_e(str(amt))}"
+            rows.append(f"<li>{line}</li>")
+        if rows:
+            fec_html = (
+                '<div style="margin-top:12px"><div style="font-size:12px;font-weight:600;color:#555;'
+                'margin-bottom:4px">FEC Schedule A (name match)</div>'
+                '<ul style="margin:0;padding-left:18px;font-size:14px;color:#333">'
+                + "".join(rows)
+                + "</ul></div>"
+            )
+
+    cl_html = ""
+    cl = jr.get("courtlistener_opinions")
+    if isinstance(cl, list) and cl:
+        cls: list[str] = []
+        for row in cl[:5]:
+            if not isinstance(row, dict):
+                continue
+            raw_u = str(row.get("url") or row.get("source_url") or "").strip()
+            title = str(row.get("case_name") or "Court opinion").strip()
+            if raw_u.startswith("http"):
+                cls.append(
+                    f'<li style="margin-bottom:4px"><a href="{_e(raw_u)}" target="_blank" '
+                    f'rel="noopener">{_e(title)}</a></li>'
+                )
+            else:
+                cls.append(f"<li>{_e(title)}</li>")
+        if cls:
+            cl_html = (
+                '<div style="margin-top:12px"><div style="font-size:12px;font-weight:600;color:#555;'
+                'margin-bottom:4px">CourtListener</div><ul style="margin:0;padding-left:18px;'
+                'font-size:14px;color:#333">' + "".join(cls) + "</ul></div>"
+            )
+
+    layer_block = "".join(p for p in layer_parts if p)
+    if not head_line and not rid_j and not fec_html and not cl_html and not layer_block:
+        return ""
+
+    inner: list[str] = [
+        '<section class="journalist-receipt-section inv-paper-card" style="margin-bottom:32px;'
+        'padding:18px 22px;border:1px solid rgba(26,26,26,0.12);border-radius:6px">',
+        '<h3 class="section-label" style="margin-bottom:12px">JOURNALIST INVESTIGATION</h3>',
+    ]
+    if head_line:
+        inner.append(f'<p style="font-size:18px;font-weight:600;color:#1a1a1a;margin:0 0 8px">{head_line}</p>')
+    if rid_j:
+        inner.append(
+            f'<p style="font-size:13px;color:#666;margin:0 0 8px">Receipt ID: <code>{_e(rid_j)}</code>'
+            f"{' · signed' if signed else ''}</p>"
+        )
+    inner.append(fec_html)
+    inner.append(cl_html)
+    inner.append(layer_block)
+    inner.append("</section>")
+    return "".join(inner)
+
+
 def _coverage_provenance_html(receipt: dict[str, Any]) -> str:
     cov = receipt.get("coverage_result") if isinstance(receipt.get("coverage_result"), dict) else {}
     adapter = str(cov.get("source_adapter", "") or "—")
@@ -1839,45 +1981,6 @@ def _chain_items_html(chain: list, side_prefix: str) -> str:
         "on this story.</p>"
     )
     return hint + "".join(blocks)
-
-
-def _dig_deeper_button_html(receipt_id: str) -> str:
-    rid = (receipt_id or "").strip()
-    if not rid:
-        return ""
-    return f"""
-<section class="dig-deeper-section" aria-label="Dig deeper">
-    <button type="button" class="mouth-btn" id="dig-btn" data-receipt-id="{_e(rid)}"
-            aria-label="Dig deeper into this investigation">
-        <svg class="mouth-svg" id="mouth-svg" viewBox="0 0 120 60" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-            <path class="mouth-closed"
-                  d="M 20 30 Q 40 24 60 24 Q 80 24 100 30 Q 80 36 60 36 Q 40 36 20 30 Z"/>
-            <path class="mouth-open-upper"
-                  d="M 20 28 Q 40 20 60 20 Q 80 20 100 28"/>
-            <path class="mouth-open-lower"
-                  d="M 20 28 Q 40 44 60 46 Q 80 44 100 28"/>
-            <rect class="mouth-teeth" x="28" y="21" width="10" height="8" rx="2"/>
-            <rect class="mouth-teeth" x="41" y="20" width="10" height="9" rx="2"/>
-            <rect class="mouth-teeth" x="54" y="20" width="10" height="9" rx="2"/>
-            <rect class="mouth-teeth" x="67" y="20" width="10" height="9" rx="2"/>
-            <rect class="mouth-teeth" x="80" y="21" width="10" height="8" rx="2"/>
-            <ellipse class="mouth-tongue" cx="60" cy="39" rx="16" ry="7"/>
-            <circle class="fact-dot dd1" cx="45" cy="52" r="3"/>
-            <circle class="fact-dot dd2" cx="60" cy="56" r="3"/>
-            <circle class="fact-dot dd3" cx="75" cy="52" r="3"/>
-            <circle class="fact-dot dd4" cx="52" cy="62" r="2.5"/>
-            <circle class="fact-dot dd5" cx="68" cy="62" r="2.5"/>
-        </svg>
-        <span class="mouth-label" id="mouth-label">DIG DEEPER</span>
-    </button>
-    <div class="deeper-results" id="deeper-results" style="display:none">
-        <div class="deeper-loading" id="deeper-loading">
-            <span class="deeper-loading-text">Pulling records…</span>
-        </div>
-        <div id="deeper-content"></div>
-    </div>
-</section>
-"""
 
 
 def _brief_hook_action_href(where: str, action: str) -> str | None:
@@ -2467,7 +2570,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
     claims_section_html = _claims_section_html(receipt)
     summary_block_html = _summary_section_html(receipt)
-    dig_deeper_html = _dig_deeper_button_html(str(rid))
+    journalist_receipt_html = _journalist_receipt_section_html(receipt)
     perspectives_block_html = (
         _global_perspectives_section_html(gp_raw)
         if (rtype == "article_analysis" or gp_raw)
@@ -2744,7 +2847,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
         coalition_section = no_coalition_html if show_coalition_placeholder else ""
 
     reporter_strip = f"""
-<div class="reporter-only inv-reporter-tools">
+<div class="inv-reporter-tools">
   <h3 class="inv-rt-hed">Reporter tools</h3>
   <p class="inv-mono">Receipt: <span id="inv-rid">{_e(rid)}</span>
     <button type="button" class="inv-btn" onclick="navigator.clipboard.writeText(document.getElementById('inv-rid').textContent.trim())">Copy</button>
@@ -2957,15 +3060,6 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     .delta-row{{flex-direction:column;gap:2px;}}
     .implication-row{{flex-direction:column;align-items:flex-start;gap:4px;}}
   }}
-  .reporter-only{{display:none;}}
-  body.inv-reporter-mode .reporter-only{{display:block !important;}}
-  body.inv-reporter-mode .inv-reader-soft{{display:none !important;}}
-  .inv-mode{{display:inline-flex;gap:4px;margin-left:12px;}}
-  .inv-mode button{{
-    font-family:"IBM Plex Sans",sans-serif;font-size:12px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;
-    padding:6px 12px;border:1px solid rgba(26,26,26,0.2);background:#fff;cursor:pointer;border-radius:2px;
-  }}
-  .inv-mode button.active{{background:#1a1a1a;color:#F7F4EF;border-color:#1a1a1a;}}
   .inv-reporter-tools{{margin:24px 0;padding:18px;background:#F5F5F5;border:1px solid rgba(26,26,26,0.12);border-radius:4px;}}
   .inv-rt-hed{{font-size:13px;letter-spacing:0.12em;text-transform:uppercase;margin-bottom:10px;}}
   .inv-mono{{font-family:"IBM Plex Mono",monospace;font-size:14px;line-height:1.65;color:#333;}}
@@ -3238,7 +3332,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   .eye-row {{
     display: flex;
     flex-wrap: wrap;
-    gap: 18px 14px;
+    align-items: flex-start;
+    gap: 14px 20px;
     padding: 0.5rem 0 2rem;
   }}
 
@@ -3277,12 +3372,19 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
   .eye-pill {{
     position: relative;
-    width: 44px;
-    height: 26px;
+    box-sizing: border-box;
+    min-width: 56px;
+    max-width: 160px;
+    width: auto;
+    height: auto;
     cursor: pointer;
     text-decoration: none;
-    display: inline-block;
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
     flex-shrink: 0;
+    gap: 6px;
+    padding-bottom: 2px;
   }}
 
   .eye-svg {{
@@ -3348,14 +3450,20 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
   }}
 
   .eye-label {{
-    position: absolute;
-    bottom: -20px;
-    left: 50%;
-    transform: translateX(-50%);
+    position: static;
+    left: auto;
+    bottom: auto;
+    transform: none;
+    width: 100%;
+    max-width: 160px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
     color: #222222;
     font-size: 11px;
     font-weight: 500;
+    line-height: 1.25;
     opacity: 0;
     transition: opacity 0.18s ease;
     pointer-events: none;
@@ -3394,164 +3502,6 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     opacity: 1;
   }}
 
-  .dig-deeper-section {{
-    margin: 2.5rem 0;
-    text-align: center;
-  }}
-  .mouth-btn {{
-    background: none;
-    border: 2px solid #111111;
-    border-radius: 4px;
-    padding: 1rem 2rem;
-    cursor: pointer;
-    display: inline-flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    transition: background 0.15s ease;
-    font-family: inherit;
-  }}
-  .mouth-btn:hover {{ background: #f5f2eb; }}
-  .mouth-btn.loading {{ opacity: 0.6; pointer-events: none; }}
-  .mouth-svg {{
-    width: 96px;
-    height: 48px;
-    overflow: visible;
-  }}
-  .mouth-closed {{
-    fill: #111111;
-    opacity: 1;
-    transition: opacity 0.2s ease;
-  }}
-  .mouth-open-upper,
-  .mouth-open-lower {{
-    fill: none;
-    stroke: #111111;
-    stroke-width: 2.5;
-    stroke-linecap: round;
-    opacity: 0;
-    transition: opacity 0.2s ease 0.1s;
-  }}
-  .mouth-teeth {{
-    fill: #ffffff;
-    stroke: #111111;
-    stroke-width: 1;
-    opacity: 0;
-    transition: opacity 0.15s ease 0.15s;
-  }}
-  .mouth-tongue {{
-    fill: #cc4444;
-    opacity: 0;
-    transition: opacity 0.15s ease 0.2s;
-  }}
-  .fact-dot {{
-    fill: #111111;
-    opacity: 0;
-  }}
-  .mouth-btn.open .mouth-closed {{ opacity: 0; }}
-  .mouth-btn.open .mouth-open-upper,
-  .mouth-btn.open .mouth-open-lower,
-  .mouth-btn.open .mouth-teeth,
-  .mouth-btn.open .mouth-tongue {{ opacity: 1; }}
-  .mouth-btn.open .fact-dot {{
-    opacity: 1;
-    animation: dig-spill 0.65s ease forwards;
-  }}
-  .mouth-btn.open .fact-dot.dd1 {{ animation-delay: 0.05s; }}
-  .mouth-btn.open .fact-dot.dd2 {{ animation-delay: 0.12s; }}
-  .mouth-btn.open .fact-dot.dd3 {{ animation-delay: 0.18s; }}
-  .mouth-btn.open .fact-dot.dd4 {{ animation-delay: 0.08s; }}
-  .mouth-btn.open .fact-dot.dd5 {{ animation-delay: 0.15s; }}
-  @keyframes dig-spill {{
-    0%   {{ transform: translateY(0); opacity: 0; }}
-    35%  {{ opacity: 1; }}
-    100% {{ transform: translateY(14px); opacity: 1; }}
-  }}
-  .mouth-label {{
-    font-size: 10px;
-    letter-spacing: 0.12em;
-    font-weight: 600;
-    color: #111111;
-  }}
-  .deeper-results {{
-    margin-top: 1.5rem;
-    text-align: left;
-  }}
-  .deeper-loading {{
-    text-align: center;
-    padding: 2rem;
-    color: #999;
-    font-size: 0.85em;
-    letter-spacing: 0.05em;
-  }}
-  .dig-deeper-h3 {{
-    font-size: 0.75em;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #999;
-    margin-bottom: 0.75rem;
-    margin-top: 0.5rem;
-    font-weight: 600;
-  }}
-  .counter-claim-card {{
-    border-left: 3px solid #e74c3c;
-    background: #fff8f8;
-    padding: 10px 14px;
-    margin-bottom: 12px;
-    border-radius: 0 4px 4px 0;
-  }}
-  .counter-claim-label {{
-    font-size: 10px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: #e74c3c;
-    font-weight: 700;
-    margin-bottom: 4px;
-  }}
-  .counter-source {{
-    font-size: 0.8em;
-    color: #888;
-    margin-top: 4px;
-  }}
-  .no-primary-source {{
-    font-size: 0.75em;
-    background: #fff3cd;
-    color: #856404;
-    padding: 3px 8px;
-    border-radius: 3px;
-    display: inline-block;
-    margin-top: 4px;
-  }}
-  .unsourced-block {{
-    background: #f8f7f2;
-    border: 1px solid #e8e4dc;
-    border-radius: 4px;
-    padding: 12px 16px;
-    margin-bottom: 12px;
-  }}
-  .unsourced-count {{
-    font-size: 1.1em;
-    font-weight: 700;
-    color: #1a1a1a;
-  }}
-  .unsourced-label {{
-    font-size: 0.8em;
-    color: #888;
-    margin-top: 2px;
-  }}
-  .crime-taxonomy-section {{ margin-bottom: 1.5rem; }}
-  .crime-row {{
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 6px 0;
-    border-bottom: 1px solid #f0ede6;
-    font-size: 0.85em;
-  }}
-  .crime-type {{ flex: 1; color: #333; }}
-  .crime-bar-wrap {{ flex: 2; background: #eee; border-radius: 2px; height: 6px; }}
-  .crime-bar {{ height: 6px; border-radius: 2px; background: #111111; }}
-  .crime-count {{ min-width: 40px; text-align: right; color: #888; font-size: 0.9em; }}
   .court-case-link {{
     color: #2c3e50;
     font-weight: 600;
@@ -3933,15 +3883,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
         style="width:min(220px,42vw);padding:5px 8px;font-size:12px;border:1px solid rgba(26,26,26,0.2);font-family:inherit" />
       <button type="submit" style="padding:5px 10px;font-size:11px;font-weight:600;letter-spacing:0.08em;text-transform:uppercase;border:1px solid #1a1a1a;background:#1a1a1a;color:#F7F4EF;cursor:pointer">INVESTIGATE</button>
     </form>
-    <span class="inv-reader-soft">{signed_badge}</span>
-    <div class="inv-mode">
-      <button type="button" id="inv-mode-reader" class="active">Reader</button>
-      <button type="button" id="inv-mode-reporter">Reporter</button>
-    </div>
-    <a href="#verification-full" style="font-size:13px;color:#555;letter-spacing:0.04em;text-decoration:none" class="reporter-only">
-      Receipt ↓
-    </a>
-    <a href="#verification" style="font-size:13px;color:#555;letter-spacing:0.04em;text-decoration:none" class="inv-reader-soft inv-receipt-jump">
+    <span>{signed_badge}</span>
+    <a href="#verification" style="font-size:13px;color:#555;letter-spacing:0.04em;text-decoration:none" class="inv-receipt-jump">
       Receipt ↓
     </a>
   </div>
@@ -3970,6 +3913,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
     {perspectives_block_html}
     {absent_from_all_html}
     {claims_section_html}
+    {journalist_receipt_html}
     {coverage_block_html}
   </div>
 
@@ -3988,10 +3932,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 <!-- FULL-WIDTH BELOW THE FOLD -->
 <div class="inv-full-width">
 
-{dig_deeper_html}
-
 <!-- CROSS-CORROBORATED -->
-{f'<div class="reporter-only" style="margin-bottom:32px"><div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#555;margin-bottom:12px">Cross-corroborated</div><div class="inv-paper-card" style="padding:4px 18px">{confirmed_html}</div></div>' if confirmed_html else ""}
+{f'<div style="margin-bottom:32px"><div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#555;margin-bottom:12px">Cross-corroborated</div><div class="inv-paper-card" style="padding:4px 18px">{confirmed_html}</div></div>' if confirmed_html else ""}
 
 <div style="height:1px;background:rgba(26,26,26,0.2);margin-bottom:32px"></div>
 
@@ -3999,18 +3941,8 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
 
 {sources_section_html}
 
-<!-- VERIFICATION (reader: one-line access) -->
-<div id="verification" class="inv-reader-soft" style="margin-bottom:28px;padding:16px 18px;background:#fff;border:1px solid rgba(26,26,26,0.12);border-radius:6px">
-  <p style="font-size:18px;line-height:1.65;color:#333">
-    {signed_badge}
-    <span style="margin-left:6px">This investigation is backed by a signed, verifiable receipt.</span>
-    <a href="/verify?id={_e(rid)}" style="font-weight:600;margin-left:4px">Verify independently ↗</a>
-    <span style="color:#666"> · Use <strong>Reporter</strong> mode for IDs, raw JSON, and research links.</span>
-  </p>
-</div>
-
-<!-- VERIFICATION (reporter: full chain) -->
-<div id="verification-full" class="reporter-only" style="margin-bottom:48px">
+<!-- VERIFICATION (full chain) -->
+<div id="verification" style="margin-bottom:48px">
   <div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;
               color:#555;margin-bottom:12px">Verification</div>
   <div style="border:1px solid rgba(26,26,26,0.15);border-radius:8px;
@@ -4050,7 +3982,7 @@ def render_investigation_page(receipt: dict, coalition: dict | None) -> str:
             justify-content:space-between;flex-wrap:wrap;gap:12px;
             border-top:1px solid rgba(26,26,26,0.2);padding-top:20px">
   <div style="font-size:13px;color:#666">PUBLIC EYE · Receipts, not verdicts.</div>
-  <a href="/verify?id={_e(rid)}" class="reporter-only" style="font-size:13px;color:#666;text-decoration:none">Independent verification ↗</a>
+  <a href="/verify?id={_e(rid)}" style="font-size:13px;color:#666;text-decoration:none">Independent verification ↗</a>
 </div>
 
 </div><!-- /.inv-full-width -->
@@ -4071,24 +4003,6 @@ function toggleChain(id) {{
   if (arrow) arrow.style.transform = open ? '' : 'rotate(180deg)';
 }}
 
-(function() {{
-  var KEY = 'publicEyeMode';
-  function setMode(rep) {{
-    document.body.classList.toggle('inv-reporter-mode', rep);
-    var r = document.getElementById('inv-mode-reader');
-    var p = document.getElementById('inv-mode-reporter');
-    if (r) r.classList.toggle('active', !rep);
-    if (p) p.classList.toggle('active', rep);
-    try {{ localStorage.setItem(KEY, rep ? 'reporter' : 'reader'); }} catch (e) {{}}
-  }}
-  try {{
-    if (localStorage.getItem(KEY) === 'reporter') setMode(true);
-  }} catch (e) {{}}
-  var br = document.getElementById('inv-mode-reader');
-  var bp = document.getElementById('inv-mode-reporter');
-  if (br) br.onclick = function() {{ setMode(false); }};
-  if (bp) bp.onclick = function() {{ setMode(true); }};
-}})();
 </script>
 <script>
 (function() {{
@@ -4109,121 +4023,6 @@ function toggleChain(id) {{
       publicEyeInvestigate(input.value);
     }});
   }}
-}})();
-</script>
-<script>
-(function() {{
-  var cache = {{}};
-  function escapeHtml(s) {{
-    if (s == null) return '';
-    var d = document.createElement('div');
-    d.textContent = String(s);
-    return d.innerHTML;
-  }}
-  function escapeAttr(s) {{
-    return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-  }}
-  function renderDeeperResults(data) {{
-    var html = '';
-    var i, j;
-    if (data.counter_claims && data.counter_claims.length) {{
-      html += '<h3 class="dig-deeper-h3">Counter-claims from opposing outlets</h3>';
-      for (i = 0; i < data.counter_claims.length; i++) {{
-        var cc = data.counter_claims[i];
-        var sourceHtml = cc.source ? '<span class="counter-source">Source: ' + escapeHtml(cc.source) + '</span>' : '';
-        var noSrc = !cc.has_primary_source ? '<span class="no-primary-source">⚠ No primary source cited</span>' : '';
-        html += '<div class="counter-claim-card"><div class="counter-claim-label">Counter-claim</div><div>' + escapeHtml(cc.claim) + '</div>' + sourceHtml + noSrc + '</div>';
-      }}
-    }}
-    if (data.unsourced_patterns && data.unsourced_patterns.length) {{
-      html += '<h3 class="dig-deeper-h3">Unsourced claim patterns</h3>';
-      for (i = 0; i < data.unsourced_patterns.length; i++) {{
-        var p = data.unsourced_patterns[i];
-        var oc = p.outlet_count != null ? p.outlet_count : 0;
-        var sc = p.sources_citing != null ? p.sources_citing : 0;
-        var scLabel = sc === 0 ? '0 cited a primary source' : (sc + ' cited a source');
-        html += '<div class="unsourced-block"><div class="unsourced-count">' + oc + ' outlets</div><div style="font-size:0.9em;margin:4px 0;">&ldquo;' + escapeHtml(p.claim) + '&rdquo;</div><div class="unsourced-label">repeated this claim — ' + scLabel + '</div></div>';
-      }}
-    }}
-    if (data.crime_taxonomy && data.crime_taxonomy.length) {{
-      var maxCr = 0;
-      for (i = 0; i < data.crime_taxonomy.length; i++) {{
-        if (data.crime_taxonomy[i].count > maxCr) maxCr = data.crime_taxonomy[i].count;
-      }}
-      if (maxCr < 1) maxCr = 1;
-      html += '<h3 class="dig-deeper-h3">Case type breakdown</h3><div class="crime-taxonomy-section">';
-      for (i = 0; i < data.crime_taxonomy.length; i++) {{
-        var row = data.crime_taxonomy[i];
-        var pct = Math.round((row.count / maxCr) * 100);
-        html += '<div class="crime-row"><span class="crime-type">' + escapeHtml(row.type) + '</span><div class="crime-bar-wrap"><div class="crime-bar" style="width:' + pct + '%"></div></div><span class="crime-count">' + escapeHtml(String(row.count)) + '</span></div>';
-      }}
-      html += '</div>';
-    }}
-    if (data.court_records && data.court_records.length) {{
-      html += '<h3 class="dig-deeper-h3">Court records — named persons</h3>';
-      for (i = 0; i < data.court_records.length; i++) {{
-        var rec = data.court_records[i];
-        html += '<div class="claim-card" style="margin-bottom:10px;"><div class="claim-header"><span style="font-weight:600;">' + escapeHtml(rec.person) + '</span></div><div class="claim-rows">';
-        for (j = 0; j < rec.cases.length; j++) {{
-          var c = rec.cases[j];
-          var rawU = (c.url || '').trim();
-          if (rawU.indexOf('http') !== 0) rawU = 'https://www.courtlistener.com' + (rawU.charAt(0) === '/' ? rawU : '/' + rawU);
-          var link = rawU ? '<a href="' + escapeAttr(rawU) + '" target="_blank" rel="noopener" class="court-case-link">' + escapeHtml(c.case_name) + '</a>' : escapeHtml(c.case_name);
-          var meta = (c.court || '') + (c.date_filed ? (' · ' + c.date_filed) : '');
-          var snip = c.snippet ? '<div class="court-snippet">&ldquo;' + escapeHtml(c.snippet) + '&rdquo;</div>' : '';
-          html += '<div class="claim-row"><div class="claim-row-text">' + link + '</div><div class="counter-source">' + escapeHtml(meta) + '</div>' + snip + '</div>';
-        }}
-        html += '</div></div>';
-      }}
-    }}
-    if (!html) {{
-      html = '<p style="color:#999;font-size:.85em;padding:1rem 0;">No additional records found for this investigation.</p>';
-    }}
-    return html;
-  }}
-  var btn = document.getElementById('dig-btn');
-  var resultsDiv = document.getElementById('deeper-results');
-  var loadingDiv = document.getElementById('deeper-loading');
-  var contentDiv = document.getElementById('deeper-content');
-  var label = document.getElementById('mouth-label');
-  if (!btn || !resultsDiv || !loadingDiv || !contentDiv || !label) return;
-  btn.addEventListener('click', function() {{
-    var receiptId = btn.getAttribute('data-receipt-id') || '';
-    if (!receiptId) return;
-    if (btn.classList.contains('open')) {{
-      btn.classList.remove('open');
-      resultsDiv.style.display = 'none';
-      label.textContent = 'DIG DEEPER';
-      return;
-    }}
-    btn.classList.add('open', 'loading');
-    label.textContent = 'PULLING RECORDS…';
-    resultsDiv.style.display = 'block';
-    loadingDiv.style.display = 'block';
-    contentDiv.innerHTML = '';
-    if (cache[receiptId]) {{
-      loadingDiv.style.display = 'none';
-      contentDiv.innerHTML = renderDeeperResults(cache[receiptId]);
-      label.textContent = 'CLOSE';
-      btn.classList.remove('loading');
-      return;
-    }}
-    fetch('/v1/dig-deeper/' + encodeURIComponent(receiptId))
-      .then(function(r) {{ if (!r.ok) throw new Error('fail'); return r.json(); }})
-      .then(function(data) {{
-        cache[receiptId] = data;
-        loadingDiv.style.display = 'none';
-        contentDiv.innerHTML = renderDeeperResults(data);
-        label.textContent = 'CLOSE';
-        btn.classList.remove('loading');
-      }})
-      .catch(function() {{
-        loadingDiv.style.display = 'none';
-        contentDiv.innerHTML = '<p style="color:#999;font-size:.85em;padding:1rem;">Could not load deeper analysis. Try again.</p>';
-        btn.classList.remove('open', 'loading');
-        label.textContent = 'DIG DEEPER';
-      }});
-  }});
 }})();
 </script>
 <script>

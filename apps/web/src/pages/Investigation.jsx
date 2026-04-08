@@ -42,6 +42,15 @@ export default function Investigation({ onToast }) {
     };
   }, [receiptId, onToast]);
 
+  useEffect(() => {
+    if (!receipt) return;
+    const jr = receipt.journalist_receipt;
+    console.log(
+      "[Investigation] journalist_receipt before JournalistDossierCard:",
+      jr == null ? "(null/undefined — card will not render)" : "(object — card should render)",
+    );
+  }, [receipt]);
+
   if (notFound || loadFailed) {
     return (
       <div className="pe-app">
